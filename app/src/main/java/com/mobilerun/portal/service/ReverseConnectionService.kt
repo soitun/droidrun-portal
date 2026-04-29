@@ -84,7 +84,8 @@ class ReverseConnectionService : Service() {
 
     private val binder = LocalBinder()
     private lateinit var configManager: ConfigManager
-    private lateinit var actionDispatcher: ActionDispatcher
+    private val actionDispatcherCache =
+        ServiceInstanceCache<MobilerunAccessibilityService, ActionDispatcher>()
     private var headlessActionDispatcher: ActionDispatcher? = null
     private lateinit var reverseDeviceEventRelay: ReverseDeviceEventRelay
 
@@ -154,6 +155,8 @@ class ReverseConnectionService : Service() {
         handler.removeCallbacksAndMessages(null)
         reverseDeviceEventRelay.stop()
         disconnect()
+        actionDispatcherCache.clear()
+        headlessActionDispatcher = null
         ConnectionStateManager.setState(ConnectionState.DISCONNECTED)
         try {
             signalingExecutor.shutdownNow()
@@ -685,15 +688,11 @@ class ReverseConnectionService : Service() {
     private fun resolveActionDispatcher(normalizedMethod: String): ActionDispatcher? {
         val service = MobilerunAccessibilityService.getInstance()
         if (service != null) {
-            if (!::actionDispatcher.isInitialized) {
-                synchronized(this) {
-                    if (!::actionDispatcher.isInitialized) {
-                        actionDispatcher = service.getActionDispatcher()
-                    }
-                }
+            return actionDispatcherCache.get(service) { currentService ->
+                currentService.getActionDispatcher()
             }
-            return actionDispatcher
         }
+        actionDispatcherCache.clear()
 
         if (!HeadlessActionSupport.isAllowed(normalizedMethod)) {
             return null

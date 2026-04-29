@@ -105,7 +105,7 @@ class MobilerunContentProvider : ContentProvider() {
 
     private lateinit var configManager: ConfigManager
 
-    private var apiHandler: ApiHandler? = null
+    private val apiHandlerCache = ServiceInstanceCache<MobilerunAccessibilityService, ApiHandler>()
 
     override fun onCreate(): Boolean {
         val appContext = context?.applicationContext
@@ -130,19 +130,22 @@ class MobilerunContentProvider : ContentProvider() {
     }
 
     private fun getHandler(): ApiHandler? {
-        if (apiHandler != null) return apiHandler
-
         val service = MobilerunAccessibilityService.getInstance()
-        if (service != null && context != null) {
-            apiHandler = ApiHandler(
-                stateRepo = StateRepository(service),
+        val providerContext = context
+        if (service == null || providerContext == null) {
+            apiHandlerCache.clear()
+            return null
+        }
+
+        return apiHandlerCache.get(service) { currentService ->
+            ApiHandler(
+                stateRepo = StateRepository(currentService),
                 getKeyboardIME = { MobilerunKeyboardIME.getInstance() },
-                getPackageManager = { context!!.packageManager },
+                getPackageManager = { providerContext.packageManager },
                 appVersionProvider = { getAppVersion() },
-                context = context!!
+                context = providerContext
             )
         }
-        return apiHandler
     }
 
     private fun getTriggerApi(): TriggerApi? {
