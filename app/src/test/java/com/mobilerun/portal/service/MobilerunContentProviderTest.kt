@@ -169,6 +169,8 @@ class MobilerunContentProviderTest {
         every { values.getAsInteger("port") } returns 9090
         every { values.getAsBoolean("enabled") } returns true
         every { values.containsKey("port") } returns true
+        every { configManager.socketServerEnabled } returns false
+        every { configManager.socketServerPort } returns 8080
 
         val result = handleSocketServerToggleInsert(
             configManager = configManager,
@@ -178,10 +180,9 @@ class MobilerunContentProviderTest {
 
         assertEquals(ApiResponse.Success("HTTP server enabled on port 9090"), result)
         assertTrue(ensureCalled)
-        verifySequence {
-            configManager.setSocketServerPortWithNotification(9090)
-            configManager.setSocketServerEnabledWithNotification(true)
-        }
+        verify(exactly = 1) { configManager.socketServerPort = 9090 }
+        verify(exactly = 1) { configManager.setSocketServerEnabledWithNotification(true) }
+        verify(exactly = 0) { configManager.setSocketServerPortWithNotification(any()) }
     }
 
     @Test
@@ -193,6 +194,8 @@ class MobilerunContentProviderTest {
         every { values.getAsInteger("port") } returns 9091
         every { values.getAsBoolean("enabled") } returns true
         every { values.containsKey("port") } returns true
+        every { configManager.websocketEnabled } returns false
+        every { configManager.websocketPort } returns 8081
 
         val result = handleWebSocketServerToggleInsert(
             configManager = configManager,
@@ -202,9 +205,32 @@ class MobilerunContentProviderTest {
 
         assertEquals(ApiResponse.Success("WebSocket server enabled on port 9091"), result)
         assertTrue(ensureCalled)
-        verifySequence {
-            configManager.setWebSocketPortWithNotification(9091)
-            configManager.setWebSocketEnabledWithNotification(true)
-        }
+        verify(exactly = 1) { configManager.websocketPort = 9091 }
+        verify(exactly = 1) { configManager.setWebSocketEnabledWithNotification(true) }
+        verify(exactly = 0) { configManager.setWebSocketPortWithNotification(any()) }
+    }
+
+    @Test
+    fun handleWebSocketServerToggleInsert_isIdempotentWhenAlreadyEnabledOnSamePort() {
+        val configManager = mockk<ConfigManager>(relaxed = true)
+        val values = mockk<ContentValues>()
+        var ensureCalled = false
+
+        every { values.getAsInteger("port") } returns 8081
+        every { values.getAsBoolean("enabled") } returns true
+        every { values.containsKey("port") } returns true
+        every { configManager.websocketEnabled } returns true
+        every { configManager.websocketPort } returns 8081
+
+        val result = handleWebSocketServerToggleInsert(
+            configManager = configManager,
+            values = values,
+            ensurePortalService = { ensureCalled = true },
+        )
+
+        assertEquals(ApiResponse.Success("WebSocket server enabled on port 8081"), result)
+        assertTrue(ensureCalled)
+        verify(exactly = 0) { configManager.setWebSocketPortWithNotification(any()) }
+        verify(exactly = 0) { configManager.setWebSocketEnabledWithNotification(any()) }
     }
 }

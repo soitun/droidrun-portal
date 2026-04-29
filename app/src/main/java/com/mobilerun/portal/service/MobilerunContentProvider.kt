@@ -104,10 +104,29 @@ internal fun handleSocketServerToggleInsert(
     val port = values?.getAsInteger("port") ?: configManager.socketServerPort
     val enabled = values?.getAsBoolean("enabled") ?: true
     ensurePortalService()
-    if (values?.containsKey("port") == true) {
-        configManager.setSocketServerPortWithNotification(port)
+    val hasPort = values?.containsKey("port") == true
+    val wasEnabled = configManager.socketServerEnabled
+    val currentPort = configManager.socketServerPort
+
+    if (enabled) {
+        if (hasPort && port != currentPort) {
+            if (wasEnabled) {
+                configManager.setSocketServerPortWithNotification(port)
+            } else {
+                configManager.socketServerPort = port
+            }
+        }
+        if (!wasEnabled) {
+            configManager.setSocketServerEnabledWithNotification(true)
+        }
+    } else {
+        if (wasEnabled) {
+            configManager.setSocketServerEnabledWithNotification(false)
+        }
+        if (hasPort && port != currentPort) {
+            configManager.socketServerPort = port
+        }
     }
-    configManager.setSocketServerEnabledWithNotification(enabled)
     return ApiResponse.Success("HTTP server ${if (enabled) "enabled" else "disabled"} on port $port")
 }
 
@@ -119,14 +138,26 @@ internal fun handleWebSocketServerToggleInsert(
     val port = values?.getAsInteger("port") ?: configManager.websocketPort
     val enabled = values?.getAsBoolean("enabled") ?: true
     ensurePortalService()
+    val hasPort = values?.containsKey("port") == true
+    val wasEnabled = configManager.websocketEnabled
+    val currentPort = configManager.websocketPort
+
     if (enabled) {
-        if (values?.containsKey("port") == true) {
-            configManager.setWebSocketPortWithNotification(port)
+        if (hasPort && port != currentPort) {
+            if (wasEnabled) {
+                configManager.setWebSocketPortWithNotification(port)
+            } else {
+                configManager.websocketPort = port
+            }
         }
-        configManager.setWebSocketEnabledWithNotification(true)
+        if (!wasEnabled) {
+            configManager.setWebSocketEnabledWithNotification(true)
+        }
     } else {
-        configManager.setWebSocketEnabledWithNotification(false)
-        if (values?.containsKey("port") == true) {
+        if (wasEnabled) {
+            configManager.setWebSocketEnabledWithNotification(false)
+        }
+        if (hasPort && port != currentPort) {
             configManager.websocketPort = port
         }
     }
