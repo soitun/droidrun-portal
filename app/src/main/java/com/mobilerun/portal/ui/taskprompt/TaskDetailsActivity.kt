@@ -1,5 +1,6 @@
 package com.mobilerun.portal.ui.taskprompt
 
+import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -8,6 +9,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.text.method.ScrollingMovementMethod
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -151,6 +153,7 @@ class TaskDetailsActivity : AppCompatActivity() {
     private var galleryLoadSessionId = 0
     private var galleryItems: List<GalleryPreviewItem> = emptyList()
 
+    @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityTaskDetailsBinding.inflate(layoutInflater)
@@ -167,6 +170,17 @@ class TaskDetailsActivity : AppCompatActivity() {
         }
         binding.taskDetailsRetryButton.setOnClickListener {
             loadTask()
+        }
+
+        resultValue.movementMethod = ScrollingMovementMethod()
+        // Used only to keep the parent scroll view from stealing drags inside the result text;
+        // the TextView has no click handler so accessibility click semantics don't apply.
+        resultValue.setOnTouchListener { view, event ->
+            view.parent?.requestDisallowInterceptTouchEvent(true)
+            if (event.action == android.view.MotionEvent.ACTION_UP) {
+                view.parent?.requestDisallowInterceptTouchEvent(false)
+            }
+            view.onTouchEvent(event)
         }
 
         trajectoryAdapter = TrajectoryAdapter()
@@ -261,6 +275,7 @@ class TaskDetailsActivity : AppCompatActivity() {
             status = details.status,
             summary = details.summary,
             steps = details.steps,
+            message = details.message,
         )
         resultLabel.visibility = if (resultText.isNullOrBlank()) View.GONE else View.VISIBLE
         resultValue.visibility = if (resultText.isNullOrBlank()) View.GONE else View.VISIBLE

@@ -655,6 +655,7 @@ class PortalCloudClient(
                 finishedAt = finishedAt,
                 succeeded = optBoolean(task, "succeeded"),
                 summary = extractTaskSummary(task),
+                message = firstNonBlankString(task, "message"),
                 llmModel = firstNonBlankString(task, "llmModel", "model"),
                 reasoning = optBoolean(task, "reasoning"),
                 vision = optBoolean(task, "vision"),

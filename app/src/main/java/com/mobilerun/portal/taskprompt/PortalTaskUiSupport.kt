@@ -55,36 +55,42 @@ object PortalTaskUiSupport {
         status: String,
         summary: String?,
         steps: Int?,
+        // Pass only on surfaces with room to render long text (details screen, trajectory).
+        // Compact callers (history rows, active task card) leave it null to keep the
+        // step-count fallback so long agent answers don't distort the layout.
+        message: String? = null,
     ): String? {
+        val normalizedMessage = message?.trim()?.takeIf { it.isNotBlank() }
         val normalizedSummary = summary?.trim()?.takeIf { it.isNotBlank() }
+        val result = normalizedMessage ?: normalizedSummary
         return when (status) {
-            PortalTaskTracking.STATUS_CREATED -> normalizedSummary
+            PortalTaskTracking.STATUS_CREATED -> result
                 ?: context.getString(R.string.task_prompt_created_generic)
 
-            PortalTaskTracking.STATUS_RUNNING -> normalizedSummary
+            PortalTaskTracking.STATUS_RUNNING -> result
                 ?: context.getString(R.string.task_prompt_running_generic)
 
-            PortalTaskTracking.STATUS_PAUSED -> normalizedSummary
+            PortalTaskTracking.STATUS_PAUSED -> result
                 ?: context.getString(R.string.task_prompt_paused_generic)
 
-            PortalTaskTracking.STATUS_CANCELLING -> normalizedSummary
+            PortalTaskTracking.STATUS_CANCELLING -> result
                 ?: context.getString(R.string.task_prompt_cancelling_generic)
 
-            PortalTaskTracking.STATUS_COMPLETED -> normalizedSummary
+            PortalTaskTracking.STATUS_COMPLETED -> result
                 ?: steps?.let { context.getString(R.string.task_prompt_completed_steps, it) }
                 ?: context.getString(R.string.task_prompt_completed_generic)
 
-            PortalTaskTracking.STATUS_FAILED -> normalizedSummary
+            PortalTaskTracking.STATUS_FAILED -> result
                 ?: steps?.let { context.getString(R.string.task_prompt_failed_steps, it) }
                 ?: context.getString(R.string.task_prompt_failed_generic)
 
-            PortalTaskTracking.STATUS_CANCELLED -> normalizedSummary
+            PortalTaskTracking.STATUS_CANCELLED -> result
                 ?: context.getString(R.string.task_prompt_cancelled_generic)
 
             PortalTaskTracking.STATUS_TRACKING_TIMEOUT ->
                 context.getString(R.string.task_prompt_timeout_stopped)
 
-            else -> normalizedSummary
+            else -> result
         }
     }
 
