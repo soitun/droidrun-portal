@@ -39,12 +39,6 @@ on:
         required: true
       R2_BUCKET:
         required: true
-      PUBLIC_R2_ACCESS_KEY_ID:
-        required: true
-      PUBLIC_R2_SECRET_ACCESS_KEY:
-        required: true
-      PUBLIC_R2_ACCOUNT_ID:
-        required: true
       PUBLIC_R2_BUCKET:
         required: true
 
@@ -90,10 +84,10 @@ jobs:
 
       - name: Publish update feed
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.PUBLIC_R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.PUBLIC_R2_SECRET_ACCESS_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
-          R2_ENDPOINT: https://${{ secrets.PUBLIC_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
           PUBLIC_R2_BUCKET: ${{ secrets.PUBLIC_R2_BUCKET }}
         run: |
           set -euo pipefail
