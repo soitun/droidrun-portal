@@ -1,5 +1,10 @@
 package com.mobilerun.portal.triggers
 
+import android.content.ComponentName
+import android.content.Context
+import android.provider.Settings
+import com.mobilerun.portal.service.MobilerunNotificationListener
+
 object TriggerEditorSupport {
     private const val DEFAULT_COOLDOWN_SECONDS = 60
 
@@ -136,6 +141,20 @@ object TriggerEditorSupport {
                 TriggerStringMatchMode.CONTAINS
             },
         )
+    }
+
+    fun isNotificationSource(source: TriggerSource): Boolean {
+        return source == TriggerSource.NOTIFICATION_POSTED ||
+            source == TriggerSource.NOTIFICATION_REMOVED
+    }
+
+    fun isNotificationAccessEnabled(context: Context): Boolean {
+        val componentName = ComponentName(context, MobilerunNotificationListener::class.java)
+        val flat = Settings.Secure.getString(
+            context.contentResolver,
+            "enabled_notification_listeners",
+        )
+        return flat?.contains(componentName.flattenToString()) == true
     }
 
     private fun String?.takeIfVisible(visible: Boolean): String? {

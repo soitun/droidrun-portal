@@ -51,6 +51,8 @@ import androidx.core.net.toUri
 class TriggerRuleEditorActivity : AppCompatActivity() {
     companion object {
         private const val EXTRA_RULE_ID = "extra_rule_id"
+        private const val STATE_PENDING_NOTIFICATION_ACCESS = "pending_notification_access"
+        private const val STATE_PENDING_RULE_ID = "pending_rule_id"
 
         fun createIntent(context: Context, ruleId: String? = null): Intent {
             return Intent(context, TriggerRuleEditorActivity::class.java).apply {
@@ -122,10 +124,18 @@ class TriggerRuleEditorActivity : AppCompatActivity() {
     private var selectedRecurringHour: Int? = null
     private var selectedRecurringMinute: Int? = null
     private var lastExactAlarmAvailable: Boolean? = null
+    private var pendingNotificationAccessEnable = false
+    private var pendingRuleId: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         TriggerRuntime.initialize(this)
+        pendingRuleId = savedInstanceState?.getString(STATE_PENDING_RULE_ID)
+        pendingNotificationAccessEnable =
+            savedInstanceState?.getBoolean(STATE_PENDING_NOTIFICATION_ACCESS, false) == true
+        if (pendingRuleId != null && intent.getStringExtra(EXTRA_RULE_ID).isNullOrBlank()) {
+            intent.putExtra(EXTRA_RULE_ID, pendingRuleId)
+        }
 
         binding = ActivityTriggerRuleEditorBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -157,6 +167,26 @@ class TriggerRuleEditorActivity : AppCompatActivity() {
         }
         lastExactAlarmAvailable = exactAlarmAvailable
         refreshExactAlarmNotice()
+
+        if (pendingNotificationAccessEnable) {
+            pendingNotificationAccessEnable = false
+            if (TriggerEditorSupport.isNotificationAccessEnabled(this)) {
+                val rule = originalRule
+                if (rule != null && !rule.enabled) {
+                    TriggerRuntime.setRuleEnabled(rule.id, true)
+                    originalRule = TriggerRuntime.listRules().firstOrNull { it.id == rule.id }
+                    Toast.makeText(this, "Trigger rule enabled", Toast.LENGTH_SHORT).show()
+                }
+            }
+            setResult(RESULT_OK)
+            finish()
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(STATE_PENDING_NOTIFICATION_ACCESS, pendingNotificationAccessEnable)
+        outState.putString(STATE_PENDING_RULE_ID, pendingRuleId)
     }
 
     private fun setupToolbar() {
@@ -728,9 +758,25 @@ class TriggerRuleEditorActivity : AppCompatActivity() {
     }
 
     private fun saveRule(finishAfterSave: Boolean, showToast: Boolean): TriggerRule? {
-        val rule = buildRuleOrShowErrors() ?: return null
+        var rule = buildRuleOrShowErrors() ?: return null
+
+        val needsNotificationAccess = rule.enabled &&
+            TriggerEditorSupport.isNotificationSource(rule.source) &&
+            !TriggerEditorSupport.isNotificationAccessEnabled(this)
+
+        if (needsNotificationAccess) {
+            rule = rule.copy(enabled = false)
+        }
+
         TriggerRuntime.saveRule(rule)
         originalRule = TriggerRuntime.listRules().firstOrNull { it.id == rule.id } ?: rule
+
+        if (needsNotificationAccess) {
+            pendingRuleId = originalRule?.id
+            showNotificationAccessWarning()
+            return null
+        }
+
         if (showToast) {
             Toast.makeText(this, "Trigger rule saved", Toast.LENGTH_SHORT).show()
         }
@@ -743,8 +789,30 @@ class TriggerRuleEditorActivity : AppCompatActivity() {
         return originalRule
     }
 
+    private fun showNotificationAccessWarning() {
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("Notification access required")
+            .setMessage("This trigger needs notification access to detect messages. The rule has been saved but kept disabled.\n\nEnable notification access, then activate the rule.")
+            .setPositiveButton("Go to Settings") { _, _ ->
+                pendingNotificationAccessEnable = true
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            }
+            .setNegativeButton("OK") { _, _ ->
+                setResult(RESULT_OK)
+                finish()
+            }
+            .setCancelable(false)
+            .show()
+    }
+
     private fun testRule() {
         val savedRule = saveRule(finishAfterSave = false, showToast = false) ?: return
+        if (TriggerEditorSupport.isNotificationSource(savedRule.source) &&
+            !TriggerEditorSupport.isNotificationAccessEnabled(this)
+        ) {
+            Toast.makeText(this, "Cannot test: notification listener access is not granted", Toast.LENGTH_SHORT).show()
+            return
+        }
         TriggerRuntime.launchTest(savedRule.id)
         Toast.makeText(this, "Test run requested for ${savedRule.name}", Toast.LENGTH_SHORT).show()
     }

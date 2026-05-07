@@ -1,7 +1,6 @@
 package com.mobilerun.portal.ui.triggers
 
 import android.Manifest
-import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -21,7 +20,7 @@ import com.mobilerun.portal.databinding.ActivityTriggerRulesBinding
 import com.mobilerun.portal.databinding.ItemTriggerQueueEntryBinding
 import com.mobilerun.portal.databinding.ItemTriggerRuleBinding
 import com.mobilerun.portal.databinding.ItemTriggerRunRecordBinding
-import com.mobilerun.portal.service.MobilerunNotificationListener
+import com.mobilerun.portal.triggers.TriggerEditorSupport
 import com.mobilerun.portal.triggers.TriggerQueueEntry
 import com.mobilerun.portal.triggers.TriggerRule
 import com.mobilerun.portal.triggers.TriggerRunRecord
@@ -34,6 +33,8 @@ import com.google.android.material.snackbar.Snackbar
 class TriggerRulesActivity : AppCompatActivity() {
 
     companion object {
+        private const val STATE_PENDING_NOTIFICATION_RULE_ID = "pending_notification_rule_id"
+
         fun createIntent(context: android.content.Context): Intent {
             return Intent(context, TriggerRulesActivity::class.java)
         }
@@ -44,6 +45,7 @@ class TriggerRulesActivity : AppCompatActivity() {
     private lateinit var runAdapter: RunAdapter
     private lateinit var queueAdapter: QueueAdapter
     private var lastExactAlarmAvailable: Boolean? = null
+    private var pendingNotificationAccessRuleId: String? = null
 
     private enum class HistoryView { RUNS, QUEUED }
     private var currentView: HistoryView = HistoryView.RUNS
@@ -63,6 +65,8 @@ class TriggerRulesActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         TriggerRuntime.initialize(this)
+        pendingNotificationAccessRuleId =
+            savedInstanceState?.getString(STATE_PENDING_NOTIFICATION_RULE_ID)
 
         binding = ActivityTriggerRulesBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -89,8 +93,22 @@ class TriggerRulesActivity : AppCompatActivity() {
             TriggerRuntime.onRulesChanged()
         }
         lastExactAlarmAvailable = exactAlarmAvailable
+        val pendingRuleId = pendingNotificationAccessRuleId
+        if (pendingRuleId != null && TriggerEditorSupport.isNotificationAccessEnabled(this)) {
+            pendingNotificationAccessRuleId = null
+            TriggerRuntime.setRuleEnabled(pendingRuleId, true)
+            Toast.makeText(this, "Trigger rule enabled", Toast.LENGTH_SHORT).show()
+        } else {
+            pendingNotificationAccessRuleId = null
+            disableNotificationRulesIfAccessRevoked()
+        }
         refreshPermissionSummary()
         reloadData()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_PENDING_NOTIFICATION_RULE_ID, pendingNotificationAccessRuleId)
     }
 
     private fun setupPermissionButtons() {
@@ -122,8 +140,16 @@ class TriggerRulesActivity : AppCompatActivity() {
     private fun setupLists() {
         ruleAdapter = RuleAdapter(
             onToggle = { rule, enabled ->
-                TriggerRuntime.setRuleEnabled(rule.id, enabled)
-                reloadData()
+                if (enabled &&
+                    TriggerEditorSupport.isNotificationSource(rule.source) &&
+                    !TriggerEditorSupport.isNotificationAccessEnabled(this)
+                ) {
+                    showNotificationAccessWarning(rule.id)
+                    reloadData()
+                } else {
+                    TriggerRuntime.setRuleEnabled(rule.id, enabled)
+                    reloadData()
+                }
             },
             onOpen = { rule ->
                 startActivity(TriggerRuleEditorActivity.createIntent(this, rule.id))
@@ -242,10 +268,37 @@ class TriggerRulesActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun isNotificationAccessEnabled(): Boolean {
-        val componentName = ComponentName(this, MobilerunNotificationListener::class.java)
-        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
-        return flat?.contains(componentName.flattenToString()) == true
+    private fun isNotificationAccessEnabled(): Boolean =
+        TriggerEditorSupport.isNotificationAccessEnabled(this)
+
+    private fun disableNotificationRulesIfAccessRevoked() {
+        if (isNotificationAccessEnabled()) return
+        var changed = false
+        for (rule in TriggerRuntime.listRules()) {
+            if (rule.enabled && TriggerEditorSupport.isNotificationSource(rule.source)) {
+                TriggerRuntime.setRuleEnabled(rule.id, false)
+                changed = true
+            }
+        }
+        if (changed) {
+            Toast.makeText(
+                this,
+                "Notification triggers disabled — notification access is not granted",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    private fun showNotificationAccessWarning(ruleId: String) {
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Notification access required")
+            .setMessage("This trigger needs notification access to detect messages. Enable notification access, then activate the rule.")
+            .setPositiveButton("Go to Settings") { _, _ ->
+                pendingNotificationAccessRuleId = ruleId
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            }
+            .setNegativeButton("OK", null)
+            .show()
     }
 
     private fun hasPermission(permission: String): Boolean {

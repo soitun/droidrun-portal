@@ -2,15 +2,12 @@ package com.mobilerun.portal.triggers
 
 import android.Manifest
 import android.app.AlarmManager
-import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import android.provider.Settings
 import androidx.core.content.ContextCompat
 import com.mobilerun.portal.events.model.EventType
 import com.mobilerun.portal.service.MobilerunAccessibilityService
-import com.mobilerun.portal.service.MobilerunNotificationListener
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -177,11 +174,23 @@ class TriggerApi(
             validation.firstMessage() ?: "Invalid trigger rule",
         )
 
-        operations.saveRule(validRule)
-        val savedRule = operations.getRule(validRule.id) ?: validRule
+        var ruleToSave = validRule
+        if (ruleToSave.enabled &&
+            TriggerEditorSupport.isNotificationSource(ruleToSave.source) &&
+            !environmentStatusProvider.get(appContext).notificationAccessEnabled
+        ) {
+            ruleToSave = ruleToSave.copy(enabled = false)
+        }
+
+        operations.saveRule(ruleToSave)
+        val savedRule = operations.getRule(ruleToSave.id) ?: ruleToSave
         return TriggerApiResult.Success(
             TriggerJson.ruleToJson(savedRule),
-            "Saved trigger rule ${savedRule.id}",
+            if (ruleToSave.enabled != validRule.enabled) {
+                "Saved trigger rule ${savedRule.id} (disabled: notification listener access not granted)"
+            } else {
+                "Saved trigger rule ${savedRule.id}"
+            },
         )
     }
 
@@ -199,6 +208,15 @@ class TriggerApi(
         val existingRule = operations.getRule(ruleId) ?: return TriggerApiResult.Error(
             "Trigger rule not found: $ruleId",
         )
+        if (enabled &&
+            TriggerEditorSupport.isNotificationSource(existingRule.source) &&
+            !environmentStatusProvider.get(appContext).notificationAccessEnabled
+        ) {
+            return TriggerApiResult.Error(
+                "Cannot enable notification trigger: notification listener access is not granted",
+            )
+        }
+
         operations.setRuleEnabled(ruleId, enabled)
         val updatedRule = operations.getRule(ruleId) ?: existingRule.copy(enabled = enabled)
         return TriggerApiResult.Success(
@@ -212,6 +230,13 @@ class TriggerApi(
         val rule = operations.getRule(ruleId) ?: return TriggerApiResult.Error(
             "Trigger rule not found: $ruleId",
         )
+        if (TriggerEditorSupport.isNotificationSource(rule.source) &&
+            !environmentStatusProvider.get(appContext).notificationAccessEnabled
+        ) {
+            return TriggerApiResult.Error(
+                "Cannot test notification trigger: notification listener access is not granted",
+            )
+        }
         operations.launchTest(ruleId)
         return TriggerApiResult.Success("Test run requested for ${rule.id}")
     }
@@ -289,14 +314,8 @@ class TriggerApi(
             )
         }
 
-        private fun isNotificationAccessEnabled(context: Context): Boolean {
-            val componentName = ComponentName(context, MobilerunNotificationListener::class.java)
-            val enabledListeners = Settings.Secure.getString(
-                context.contentResolver,
-                "enabled_notification_listeners",
-            )
-            return enabledListeners?.contains(componentName.flattenToString()) == true
-        }
+        private fun isNotificationAccessEnabled(context: Context): Boolean =
+            TriggerEditorSupport.isNotificationAccessEnabled(context)
 
         private fun hasPermission(context: Context, permission: String): Boolean {
             return ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
