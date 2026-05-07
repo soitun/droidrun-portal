@@ -310,7 +310,7 @@ class TriggerRulesActivity : AppCompatActivity() {
                 onOpen: (TriggerRule) -> Unit,
             ) {
                 binding.ruleNameText.text = rule.name
-                binding.ruleSummaryText.text = TriggerUiSupport.summary(rule)
+                binding.ruleSummaryText.text = TriggerUiSupport.summary(rule, itemView.context)
                 binding.ruleStatusText.text = buildString {
                     append(if (rule.enabled) "Enabled" else "Disabled")
                     rule.maxLaunchCount?.let { maxCount ->

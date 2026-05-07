@@ -1,5 +1,6 @@
 package com.mobilerun.portal.triggers
 
+import android.content.Context
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -42,10 +43,13 @@ object TriggerUiSupport {
         }
     }
 
-    fun summary(rule: TriggerRule): String {
+    fun summary(rule: TriggerRule, context: Context? = null): String {
         return buildList {
             add(sourceLabel(rule.source))
-            rule.packageName?.takeIf { it.isNotBlank() }?.let { add("pkg=$it") }
+            rule.packageName?.takeIf { it.isNotBlank() }?.let { pkg ->
+                val label = resolveAppLabel(context, pkg)
+                add(if (label != null) "app=$label" else "pkg=$pkg")
+            }
             rule.titleFilter?.takeIf { it.isNotBlank() }?.let { add("title=$it") }
             rule.textFilter?.takeIf { it.isNotBlank() }?.let { add("text=$it") }
             rule.networkType?.let { add("network=${it.name}") }
@@ -95,5 +99,21 @@ object TriggerUiSupport {
 
     fun dayOfWeekLabel(dayOfWeek: Int): String? {
         return dayOfWeekEntries().firstOrNull { it.second == dayOfWeek }?.first
+    }
+
+    private fun resolveAppLabel(context: Context?, packageName: String): String? {
+        if (context == null) return null
+        return try {
+            val pm = context.packageManager
+            val appInfo = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                pm.getApplicationInfo(packageName, android.content.pm.PackageManager.ApplicationInfoFlags.of(0L))
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getApplicationInfo(packageName, 0)
+            }
+            pm.getApplicationLabel(appInfo).toString()
+        } catch (_: Exception) {
+            null
+        }
     }
 }
