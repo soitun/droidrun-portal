@@ -2,18 +2,28 @@ package com.mobilerun.portal.ui.triggers
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
+import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.os.Build
 import android.provider.Settings
 import android.text.InputFilter
 import android.text.format.DateFormat
 import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
 import android.widget.ArrayAdapter
+import android.widget.Filter
+import android.widget.Filterable
+import android.widget.ImageView
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
 import androidx.core.widget.doAfterTextChanged
+import com.mobilerun.portal.R
 import com.mobilerun.portal.config.ConfigManager
 import com.mobilerun.portal.databinding.ActivityTriggerRuleEditorBinding
 import com.mobilerun.portal.databinding.DialogTriggerDurationPickerBinding
@@ -48,6 +58,12 @@ class TriggerRuleEditorActivity : AppCompatActivity() {
             }
         }
     }
+
+    private data class AppInfo(
+        val packageName: String,
+        val label: String,
+        val icon: Drawable?,
+    )
 
     private data class LabeledValue<T>(
         val label: String,
@@ -95,6 +111,8 @@ class TriggerRuleEditorActivity : AppCompatActivity() {
     }
 
     private var originalRule: TriggerRule? = null
+    private var selectedPackageName: String? = null
+    private var loadedApps: List<AppInfo> = emptyList()
     private var selectedSource: TriggerSource = TriggerSource.NOTIFICATION_POSTED
     private var selectedRunLimitMode: RunLimitMode = RunLimitMode.ALWAYS
     private var selectedDelayMinutes: Int? = null
@@ -126,6 +144,7 @@ class TriggerRuleEditorActivity : AppCompatActivity() {
         setupToolbar()
         setupDropdowns()
         setupControls()
+        setupAppPicker()
         populateSeedRule()
         loadModelOptions()
     }
@@ -244,7 +263,10 @@ class TriggerRuleEditorActivity : AppCompatActivity() {
         binding.inputRuleName.setText(seed.name)
         binding.inputPromptTemplate.setText(seed.promptTemplate)
         binding.inputCooldownSeconds.setText(seed.cooldownSeconds.toString())
-        binding.inputPackageName.setText(seed.packageName.orEmpty())
+        selectedPackageName = seed.packageName
+        suppressPackageNameWatcher = true
+        binding.inputPackageName.setText(resolveAppLabel(seed.packageName) ?: seed.packageName.orEmpty(), false)
+        suppressPackageNameWatcher = false
         binding.inputTitleFilter.setText(seed.titleFilter.orEmpty())
         binding.inputTextFilter.setText(seed.textFilter.orEmpty())
         binding.inputThresholdValue.setText(seed.thresholdValue?.toString().orEmpty())
@@ -618,6 +640,8 @@ class TriggerRuleEditorActivity : AppCompatActivity() {
             else -> null
         }
 
+        val packageName = resolvePackageName()
+
         val seed = originalRule ?: TriggerRule(
             name = ruleName,
             source = selectedSource,
@@ -637,7 +661,7 @@ class TriggerRuleEditorActivity : AppCompatActivity() {
                 TriggerBusyPolicy.SKIP
             },
             stringMatchMode = selectedMatchMode(),
-            packageName = binding.inputPackageName.text?.toString(),
+            packageName = packageName,
             titleFilter = binding.inputTitleFilter.text?.toString(),
             textFilter = binding.inputTextFilter.text?.toString(),
             thresholdValue = thresholdValue,
@@ -836,5 +860,131 @@ class TriggerRuleEditorActivity : AppCompatActivity() {
             this == TriggerSource.TIME_ABSOLUTE ||
             this == TriggerSource.TIME_DAILY ||
             this == TriggerSource.TIME_WEEKLY
+    }
+
+    private var suppressPackageNameWatcher = false
+
+    private fun setupAppPicker() {
+        binding.inputPackageName.doAfterTextChanged {
+            if (!suppressPackageNameWatcher) {
+                selectedPackageName = null
+            }
+        }
+
+        Thread {
+            val apps = loadInstalledApps()
+            runOnUiThread {
+                loadedApps = apps
+                val adapter = AppPickerAdapter(this, apps)
+                binding.inputPackageName.setAdapter(adapter)
+                binding.inputPackageName.setOnItemClickListener { _, _, position, _ ->
+                    val app = adapter.getItem(position)
+                    if (app != null) {
+                        selectedPackageName = app.packageName
+                        suppressPackageNameWatcher = true
+                        binding.inputPackageName.setText(app.label, false)
+                        suppressPackageNameWatcher = false
+                        binding.inputPackageName.clearFocus()
+                        val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                        imm?.hideSoftInputFromWindow(binding.inputPackageName.windowToken, 0)
+                    }
+                }
+                binding.inputPackageName.setOnClickListener {
+                    binding.inputPackageName.showDropDown()
+                }
+            }
+        }.start()
+    }
+
+    private fun loadInstalledApps(): List<AppInfo> {
+        val pm = packageManager
+        val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+        val resolvedApps: List<ResolveInfo> =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.queryIntentActivities(mainIntent, PackageManager.ResolveInfoFlags.of(0L))
+            } else {
+                @Suppress("DEPRECATION")
+                pm.queryIntentActivities(mainIntent, 0)
+            }
+        return resolvedApps.mapNotNull { resolveInfo ->
+            try {
+                val pkgName = resolveInfo.activityInfo.packageName
+                val label = resolveInfo.loadLabel(pm).toString()
+                val icon = resolveInfo.loadIcon(pm)
+                AppInfo(pkgName, label, icon)
+            } catch (_: Exception) {
+                null
+            }
+        }.sortedBy { it.label.lowercase() }
+    }
+
+    private fun resolvePackageName(): String? {
+        if (selectedPackageName != null) return selectedPackageName
+        val typed = binding.inputPackageName.text?.toString()?.trim()
+        if (typed.isNullOrBlank()) return null
+        val matchByLabel = loadedApps.firstOrNull { it.label.equals(typed, ignoreCase = true) }
+        if (matchByLabel != null) return matchByLabel.packageName
+        return typed
+    }
+
+    private fun resolveAppLabel(packageName: String?): String? =
+        TriggerUiSupport.resolveAppLabel(this, packageName)
+
+    private class AppPickerAdapter(
+        context: Context,
+        private val allApps: List<AppInfo>,
+    ) : ArrayAdapter<AppInfo>(context, R.layout.item_app_picker, allApps), Filterable {
+
+        private var filtered: List<AppInfo> = allApps
+
+        override fun getCount(): Int = filtered.size
+
+        override fun getItem(position: Int): AppInfo? = filtered.getOrNull(position)
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val view = convertView ?: LayoutInflater.from(context)
+                .inflate(R.layout.item_app_picker, parent, false)
+            val app = getItem(position) ?: return view
+
+            view.findViewById<ImageView>(R.id.appIcon).setImageDrawable(app.icon)
+            view.findViewById<TextView>(R.id.appLabel).text = app.label
+            view.findViewById<TextView>(R.id.appPackageName).text = app.packageName
+            return view
+        }
+
+        override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View =
+            getView(position, convertView, parent)
+
+        private val appFilter = object : Filter() {
+            override fun performFiltering(constraint: CharSequence?): FilterResults {
+                val query = constraint?.toString()?.trim()?.lowercase() ?: ""
+                val results = if (query.isEmpty()) {
+                    allApps
+                } else {
+                    allApps.filter {
+                        it.label.lowercase().contains(query) ||
+                            it.packageName.lowercase().contains(query)
+                    }
+                }
+                return FilterResults().apply {
+                    values = results
+                    count = results.size
+                }
+            }
+
+            @Suppress("UNCHECKED_CAST")
+            override fun publishResults(constraint: CharSequence?, results: FilterResults?) {
+                filtered = (results?.values as? List<AppInfo>) ?: allApps
+                if (filtered.isNotEmpty()) notifyDataSetChanged() else notifyDataSetInvalidated()
+            }
+
+            override fun convertResultToString(resultValue: Any?): CharSequence {
+                return (resultValue as? AppInfo)?.label ?: ""
+            }
+        }
+
+        override fun getFilter(): Filter = appFilter
     }
 }
