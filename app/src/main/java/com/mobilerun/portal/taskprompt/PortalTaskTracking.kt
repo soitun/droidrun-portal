@@ -52,6 +52,7 @@ data class PortalTaskDetails(
     val finishedAt: String? = null,
     val succeeded: Boolean? = null,
     val summary: String? = null,
+    val message: String? = null,
     val llmModel: String? = null,
     val reasoning: Boolean? = null,
     val vision: Boolean? = null,

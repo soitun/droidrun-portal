@@ -45,6 +45,7 @@ object PortalTaskTrajectoryUiSupport {
     )
 
     private val SUMMARY_PRIORITY_KEYS = listOf(
+        "message",
         "summary",
         "progress_summary",
         "description",
@@ -222,7 +223,7 @@ object PortalTaskTrajectoryUiSupport {
 
             "ResultEvent" -> buildSectionText(
                 "Status" to booleanStatus(dataObject?.opt("success")),
-                "Reason" to stringValue(dataObject?.opt("reason")),
+                "Result" to (stringValue(dataObject?.opt("message")) ?: stringValue(dataObject?.opt("reason"))),
                 "Steps" to stringValue(dataObject?.opt("steps")),
                 "Structured output" to prettyJsonString(dataObject?.opt("structured_output")),
             )

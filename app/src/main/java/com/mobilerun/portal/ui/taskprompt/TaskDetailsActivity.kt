@@ -1,5 +1,6 @@
 package com.mobilerun.portal.ui.taskprompt
 
+import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -8,6 +9,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.text.method.ScrollingMovementMethod
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -151,6 +153,7 @@ class TaskDetailsActivity : AppCompatActivity() {
     private var galleryLoadSessionId = 0
     private var galleryItems: List<GalleryPreviewItem> = emptyList()
 
+    @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityTaskDetailsBinding.inflate(layoutInflater)
@@ -167,6 +170,31 @@ class TaskDetailsActivity : AppCompatActivity() {
         }
         binding.taskDetailsRetryButton.setOnClickListener {
             loadTask()
+        }
+
+        resultValue.movementMethod = ScrollingMovementMethod()
+        var resultTouchStartY = 0f
+        resultValue.setOnTouchListener { view, event ->
+            when (event.action) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    resultTouchStartY = event.y
+                    if (view.canScrollVertically(1) || view.canScrollVertically(-1)) {
+                        view.parent?.requestDisallowInterceptTouchEvent(true)
+                    }
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val dy = resultTouchStartY - event.y
+                    if ((dy > 0 && !view.canScrollVertically(1)) ||
+                        (dy < 0 && !view.canScrollVertically(-1))) {
+                        view.parent?.requestDisallowInterceptTouchEvent(false)
+                    }
+                }
+                android.view.MotionEvent.ACTION_UP,
+                android.view.MotionEvent.ACTION_CANCEL -> {
+                    view.parent?.requestDisallowInterceptTouchEvent(false)
+                }
+            }
+            view.onTouchEvent(event)
         }
 
         trajectoryAdapter = TrajectoryAdapter()
@@ -261,6 +289,7 @@ class TaskDetailsActivity : AppCompatActivity() {
             status = details.status,
             summary = details.summary,
             steps = details.steps,
+            message = details.message,
         )
         resultLabel.visibility = if (resultText.isNullOrBlank()) View.GONE else View.VISIBLE
         resultValue.visibility = if (resultText.isNullOrBlank()) View.GONE else View.VISIBLE
