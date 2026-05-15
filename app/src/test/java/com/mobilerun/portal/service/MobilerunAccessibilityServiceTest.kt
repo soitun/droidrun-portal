@@ -1,11 +1,47 @@
 package com.mobilerun.portal.service
 
+import android.graphics.Rect
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MobilerunAccessibilityServiceTest {
+
+    @Test
+    fun updateScreenBounds_overwritesStalePortraitBoundsAfterLandscapeRotation() {
+        val bounds = rect(1080, 2400)
+
+        val changed = MobilerunAccessibilityService.updateScreenBounds(bounds, 2400, 1080)
+
+        assertTrue(changed)
+        assertEquals(0, bounds.left)
+        assertEquals(0, bounds.top)
+        assertEquals(2400, bounds.right)
+        assertEquals(1080, bounds.bottom)
+    }
+
+    @Test
+    fun updateScreenBounds_reportsUnchangedWhenDimensionsMatch() {
+        val bounds = rect(2400, 1080)
+
+        val changed = MobilerunAccessibilityService.updateScreenBounds(bounds, 2400, 1080)
+
+        assertFalse(changed)
+        assertEquals(0, bounds.left)
+        assertEquals(0, bounds.top)
+        assertEquals(2400, bounds.right)
+        assertEquals(1080, bounds.bottom)
+    }
+
+    private fun rect(width: Int, height: Int): Rect {
+        return Rect().apply {
+            left = 0
+            top = 0
+            right = width
+            bottom = height
+        }
+    }
 
     @Test
     fun shouldReuseVisibleElementsSnapshot_allowsFreshSameScreenCache() {

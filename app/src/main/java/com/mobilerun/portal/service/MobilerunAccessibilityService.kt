@@ -8,6 +8,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Rect
 import android.util.Log
 import android.view.Display
@@ -81,6 +82,20 @@ class MobilerunAccessibilityService : AccessibilityService(), ConfigManager.Conf
                     snapshotAgeMs in 0L..VISIBLE_ELEMENTS_STALE_GRACE_MS &&
                     snapshotPackageName == currentPackageName &&
                     snapshotActivityName == currentActivityName
+        }
+
+        internal fun updateScreenBounds(bounds: Rect, width: Int, height: Int): Boolean {
+            val safeWidth = width.coerceAtLeast(0)
+            val safeHeight = height.coerceAtLeast(0)
+            val changed = bounds.left != 0 ||
+                    bounds.top != 0 ||
+                    bounds.right != safeWidth ||
+                    bounds.bottom != safeHeight
+            bounds.left = 0
+            bounds.top = 0
+            bounds.right = safeWidth
+            bounds.bottom = safeHeight
+            return changed
         }
 
         fun getInstance(): MobilerunAccessibilityService? = instance
@@ -197,16 +212,7 @@ class MobilerunAccessibilityService : AccessibilityService(), ConfigManager.Conf
     override fun onCreate() {
         super.onCreate()
         overlayManager = OverlayManager(this)
-        val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = windowManager.currentWindowMetrics.bounds
-            screenBounds.set(0, 0, bounds.width(), bounds.height())
-        } else {
-            val metrics = android.util.DisplayMetrics()
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.getRealMetrics(metrics)
-            screenBounds.set(0, 0, metrics.widthPixels, metrics.heightPixels)
-        }
+        refreshScreenBounds()
 
         // Initialize ConfigManager
         configManager = ConfigManager.getInstance(this)
@@ -367,6 +373,13 @@ class MobilerunAccessibilityService : AccessibilityService(), ConfigManager.Conf
                 // Use a faster handling instead of clearing elements
             }
         }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        refreshScreenBounds()
+        clearVisibleElementSnapshot()
+        refreshVisibleElements()
     }
 
     // Periodic update runnable
@@ -549,7 +562,21 @@ class MobilerunAccessibilityService : AccessibilityService(), ConfigManager.Conf
 
     fun getCurrentAppliedOffset(): Int = overlayManager.getPositionOffsetY()
 
-    fun getScreenBounds(): Rect = screenBounds
+    fun getScreenBounds(): Rect = refreshScreenBounds()
+
+    private fun refreshScreenBounds(): Rect {
+        val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = windowManager.currentWindowMetrics.bounds
+            updateScreenBounds(screenBounds, bounds.width(), bounds.height())
+        } else {
+            val metrics = android.util.DisplayMetrics()
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.getRealMetrics(metrics)
+            updateScreenBounds(screenBounds, metrics.widthPixels, metrics.heightPixels)
+        }
+        return Rect(screenBounds)
+    }
 
     fun getActionDispatcher(): ActionDispatcher = actionDispatcher
 
@@ -621,6 +648,7 @@ class MobilerunAccessibilityService : AccessibilityService(), ConfigManager.Conf
     private fun getVisibleElementsInternal(): MutableList<ElementNode> {
         val elements = mutableListOf<ElementNode>()
         val indexCounter = IndexCounter(1)
+        val screenBoundsSnapshot = refreshScreenBounds()
 
         val rootCandidates = collectRootCandidates()
         if (rootCandidates.isEmpty()) {
@@ -645,7 +673,7 @@ class MobilerunAccessibilityService : AccessibilityService(), ConfigManager.Conf
 
         try {
             for ((rootNode, layer) in rootCandidates) {
-                collectVisibleElements(rootNode, layer, null, elements, indexCounter)
+                collectVisibleElements(rootNode, layer, null, elements, indexCounter, screenBoundsSnapshot)
             }
         } finally {
             rootCandidates.forEach { (node, _) -> node.recycle() }
@@ -724,6 +752,7 @@ class MobilerunAccessibilityService : AccessibilityService(), ConfigManager.Conf
         parent: ElementNode?,
         rootElements: MutableList<ElementNode>,
         indexCounter: IndexCounter,
+        screenBoundsSnapshot: Rect,
         depth: Int = 0,
         activeNodePath: MutableSet<AccessibilityNodeInfo> = mutableSetOf()
     ) {
@@ -748,7 +777,7 @@ class MobilerunAccessibilityService : AccessibilityService(), ConfigManager.Conf
             }
 
             try {
-                val isInScreen = Rect.intersects(rect, screenBounds)
+                val isInScreen = Rect.intersects(rect, screenBoundsSnapshot)
                 val hasSize = rect.width() > MIN_ELEMENT_SIZE && rect.height() > MIN_ELEMENT_SIZE
 
                 var currentElement: ElementNode? = null
@@ -831,6 +860,7 @@ class MobilerunAccessibilityService : AccessibilityService(), ConfigManager.Conf
                             childParent,
                             rootElements,
                             indexCounter,
+                            screenBoundsSnapshot,
                             depth + 1,
                             activeNodePath
                         )
@@ -901,11 +931,12 @@ class MobilerunAccessibilityService : AccessibilityService(), ConfigManager.Conf
     }
 
     fun getDeviceContext(): org.json.JSONObject {
+        val bounds = refreshScreenBounds()
         return org.json.JSONObject().apply {
             // Screen dimensions
             put("screen_bounds", org.json.JSONObject().apply {
-                put("width", screenBounds.width())
-                put("height", screenBounds.height())
+                put("width", bounds.width())
+                put("height", bounds.height())
             })
 
             // Filtering parameters
