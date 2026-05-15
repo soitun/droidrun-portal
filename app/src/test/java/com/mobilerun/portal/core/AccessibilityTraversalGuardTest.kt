@@ -48,6 +48,29 @@ class AccessibilityTraversalGuardTest {
     }
 
     @Test
+    fun activeReferenceCheckUsesIdentityNotAccessibilityEquality() {
+        val activePath = mutableSetOf<AccessibilityNodeInfo>()
+        val first = node(viewId = "same-source")
+        val equivalent = node(viewId = "same-source-copy")
+
+        every { first.hashCode() } returns 42
+        every { equivalent.hashCode() } returns 42
+        every { first.equals(any()) } answers {
+            val other = firstArg<Any?>()
+            other === first || other === equivalent
+        }
+        every { equivalent.equals(any()) } answers {
+            val other = firstArg<Any?>()
+            other === equivalent || other === first
+        }
+
+        assertTrue(AccessibilityTraversalGuard.enterActivePath(first, activePath))
+
+        assertTrue(AccessibilityTraversalGuard.isActiveNodeReference(first, activePath))
+        assertFalse(AccessibilityTraversalGuard.isActiveNodeReference(equivalent, activePath))
+    }
+
+    @Test
     fun traversalKeyIncludesStableNodeFields() {
         val rect = Rect(0, 0, 10, 10)
         val first = node(viewId = "first")

@@ -819,6 +819,11 @@ class MobilerunAccessibilityService : AccessibilityService(), ConfigManager.Conf
                         continue
                     }
 
+                    if (AccessibilityTraversalGuard.isActiveNodeReference(childNode, activeNodePath)) {
+                        Log.w(TAG, "Skipping child accessibility node that references an active ancestor: $nodeKey")
+                        continue
+                    }
+
                     try {
                         collectVisibleElements(
                             childNode,

@@ -23,6 +23,13 @@ object AccessibilityTraversalGuard {
         activeNodePath.remove(node)
     }
 
+    fun isActiveNodeReference(
+        node: AccessibilityNodeInfo,
+        activeNodePath: Set<AccessibilityNodeInfo>
+    ): Boolean {
+        return activeNodePath.any { activeNode -> activeNode === node }
+    }
+
     fun createTraversalKey(node: AccessibilityNodeInfo, rect: Rect): String {
         return listOf(
             safeInt { node.windowId }?.toString().orEmpty(),

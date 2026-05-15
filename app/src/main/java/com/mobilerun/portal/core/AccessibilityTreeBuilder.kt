@@ -62,7 +62,9 @@ object AccessibilityTreeBuilder {
                 TAG,
                 "Skipping cyclic accessibility node while building full tree: $nodeKey",
             )
-            node.recycle()
+            if (!AccessibilityTraversalGuard.isActiveNodeReference(node, activeNodePath)) {
+                node.recycle()
+            }
             return null
         }
 
@@ -97,6 +99,11 @@ object AccessibilityTreeBuilder {
 
                 if (child === node) {
                     Log.w(TAG, "Skipping child accessibility node that references its parent: $nodeKey")
+                    continue
+                }
+
+                if (AccessibilityTraversalGuard.isActiveNodeReference(child, activeNodePath)) {
+                    Log.w(TAG, "Skipping child accessibility node that references an active ancestor: $nodeKey")
                     continue
                 }
 

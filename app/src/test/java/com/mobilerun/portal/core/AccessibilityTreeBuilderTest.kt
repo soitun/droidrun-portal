@@ -10,6 +10,7 @@ import io.mockk.just
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkAll
+import io.mockk.verify
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -87,6 +88,29 @@ class AccessibilityTreeBuilderTest {
 
         assertNotNull(json)
         assertEquals(2, json!!.getJSONArray("children").length())
+    }
+
+    @Test
+    fun buildFullAccessibilityTreeJson_doesNotRecycleActiveAncestorCycleChild() {
+        val root = node("root")
+        val child = node("child")
+        var rootRecycled = false
+        configureNode(root, viewId = "root", children = listOf(child))
+        configureNode(child, viewId = "child", children = listOf(root))
+        every { root.recycle() } answers {
+            rootRecycled = true
+        }
+        every { root.viewIdResourceName } answers {
+            if (rootRecycled) throw RuntimeException("root was recycled early") else "root"
+        }
+
+        val json = AccessibilityTreeBuilder.buildFullAccessibilityTreeJson(root)
+
+        assertNotNull(json)
+        assertEquals("root", json!!.getString("resourceId"))
+        assertEquals(1, json.getJSONArray("children").length())
+        assertEquals(0, json.getJSONArray("children").getJSONObject(0).getJSONArray("children").length())
+        verify(exactly = 1) { root.recycle() }
     }
 
     private fun node(name: String): AccessibilityNodeInfo {
