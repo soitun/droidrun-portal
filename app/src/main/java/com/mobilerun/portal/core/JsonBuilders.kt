@@ -4,10 +4,33 @@ import com.mobilerun.portal.model.ElementNode
 import com.mobilerun.portal.model.PhoneState
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Collections
+import java.util.IdentityHashMap
 
 object JsonBuilders {
 
     fun elementNodeToJson(element: ElementNode): JSONObject {
+        return elementNodeToJson(element, identitySet())
+    }
+
+    private fun elementNodeToJson(
+        element: ElementNode,
+        visited: MutableSet<ElementNode>
+    ): JSONObject {
+        if (!visited.add(element)) {
+            return JSONObject().apply {
+                put("index", element.overlayIndex)
+                put("resourceId", element.nodeInfo.viewIdResourceName ?: "")
+                put("className", element.className)
+                put("text", element.text)
+                put(
+                    "bounds",
+                    "${element.rect.left}, ${element.rect.top}, ${element.rect.right}, ${element.rect.bottom}",
+                )
+                put("children", JSONArray())
+            }
+        }
+
         return JSONObject().apply {
             put("index", element.overlayIndex)
             put("resourceId", element.nodeInfo.viewIdResourceName ?: "")
@@ -20,9 +43,12 @@ object JsonBuilders {
 
             val childrenArray = JSONArray()
             element.children.forEach { child ->
-                childrenArray.put(elementNodeToJson(child))
+                if (!visited.contains(child)) {
+                    childrenArray.put(elementNodeToJson(child, visited))
+                }
             }
             put("children", childrenArray)
+            visited.remove(element)
         }
     }
 
@@ -39,5 +65,9 @@ object JsonBuilders {
                 put("resourceId", state.focusedElement?.viewIdResourceName ?: "")
             })
         }
+    }
+
+    private fun identitySet(): MutableSet<ElementNode> {
+        return Collections.newSetFromMap(IdentityHashMap())
     }
 }

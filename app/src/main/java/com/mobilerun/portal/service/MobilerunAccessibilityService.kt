@@ -21,6 +21,7 @@ import com.mobilerun.portal.R
 import com.mobilerun.portal.model.ElementNode
 import com.mobilerun.portal.model.PhoneState
 import com.mobilerun.portal.api.ApiHandler
+import com.mobilerun.portal.core.AccessibilityTraversalGuard
 import com.mobilerun.portal.core.StateRepository
 import com.mobilerun.portal.config.ConfigManager
 import com.mobilerun.portal.input.MobilerunKeyboardIME
@@ -43,6 +44,8 @@ import com.mobilerun.portal.keepalive.KeepAliveRecoveryActivity
 import com.mobilerun.portal.triggers.TriggerRuntime
 import androidx.core.app.NotificationCompat
 import org.json.JSONObject
+import java.util.Collections
+import java.util.IdentityHashMap
 
 @SuppressLint("AccessibilityPolicy")
 class MobilerunAccessibilityService : AccessibilityService(), ConfigManager.ConfigChangeListener {
@@ -660,9 +663,20 @@ class MobilerunAccessibilityService : AccessibilityService(), ConfigManager.Conf
     }
 
     private fun collectRootCandidates(): List<Pair<AccessibilityNodeInfo, Int>> {
-        rootInActiveWindow?.let { return listOf(it to 0) }
+        val activeRoot = try {
+            rootInActiveWindow
+        } catch (e: RuntimeException) {
+            Log.e(TAG, "Unable to read active accessibility root: ${e.message}", e)
+            null
+        }
+        activeRoot?.let { return listOf(it to 0) }
 
-        val windows = windows ?: return emptyList()
+        val windows = try {
+            windows
+        } catch (e: RuntimeException) {
+            Log.e(TAG, "Unable to read accessibility windows: ${e.message}", e)
+            null
+        } ?: return emptyList()
         val out = mutableListOf<Pair<AccessibilityNodeInfo, Int>>()
         try {
             windows.sortedWith(
@@ -671,7 +685,16 @@ class MobilerunAccessibilityService : AccessibilityService(), ConfigManager.Conf
             )
                 .filter { isUserFacingWindow(it) }
                 .forEach { window ->
-                    val root = window.root
+                    val root = try {
+                        window.root
+                    } catch (e: RuntimeException) {
+                        Log.e(
+                            TAG,
+                            "Unable to read accessibility window root layer=${window.layer}: ${e.message}",
+                            e,
+                        )
+                        null
+                    }
                     if (root != null) {
                         out.add(root to window.layer)
                     }
@@ -700,74 +723,123 @@ class MobilerunAccessibilityService : AccessibilityService(), ConfigManager.Conf
         windowLayer: Int,
         parent: ElementNode?,
         rootElements: MutableList<ElementNode>,
-        indexCounter: IndexCounter
+        indexCounter: IndexCounter,
+        depth: Int = 0,
+        activeNodePath: MutableSet<AccessibilityNodeInfo> = mutableSetOf()
     ) {
         try {
 
             val rect = Rect()
             node.getBoundsInScreen(rect)
+            val nodeKey = AccessibilityTraversalGuard.createTraversalKey(node, rect)
 
-            val isInScreen = Rect.intersects(rect, screenBounds)
-            val hasSize = rect.width() > MIN_ELEMENT_SIZE && rect.height() > MIN_ELEMENT_SIZE
-
-            var currentElement: ElementNode? = null
-
-            if (isInScreen && hasSize) {
-                val text = node.text?.toString() ?: ""
-                val contentDesc = node.contentDescription?.toString() ?: ""
-                val className = node.className?.toString() ?: ""
-                val viewId = node.viewIdResourceName ?: ""
-
-                val displayText = when {
-                    text.isNotEmpty() -> text
-                    contentDesc.isNotEmpty() -> contentDesc
-                    viewId.isNotEmpty() -> viewId.substringAfterLast('/')
-                    else -> className.substringAfterLast('.')
-                }
-
-                val id = ElementNode.createId(rect, className.substringAfterLast('.'), displayText)
-
-                val nodeCopy = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    AccessibilityNodeInfo(node)
-                } else {
-                    @Suppress("DEPRECATION")
-                    AccessibilityNodeInfo.obtain(node)
-                }
-                currentElement = ElementNode(
-                    nodeCopy,
-                    Rect(rect),
-                    displayText,
-                    className.substringAfterLast('.'),
-                    windowLayer,
-                    System.currentTimeMillis(),
-                    id
+            if (AccessibilityTraversalGuard.isTooDeep(depth)) {
+                Log.w(
+                    TAG,
+                    "Skipping accessibility subtree deeper than " +
+                        "${AccessibilityTraversalGuard.MAX_ACCESSIBILITY_TREE_DEPTH} levels: $nodeKey",
                 )
-
-                // Assign unique index
-                currentElement.overlayIndex = indexCounter.getNext()
-
-                if (parent != null) {
-                    parent.addChild(currentElement)
-                } else {
-                    rootElements.add(currentElement)
-                }
+                return
             }
 
-            // Recursively process children
-            val childParent = currentElement ?: parent
-            for (i in 0 until node.childCount) {
-                val childNode = node.getChild(i) ?: continue
-                try {
-                    collectVisibleElements(
-                        childNode,
+            if (!AccessibilityTraversalGuard.enterActivePath(node, activeNodePath)) {
+                Log.w(TAG, "Skipping cyclic accessibility node: $nodeKey")
+                return
+            }
+
+            try {
+                val isInScreen = Rect.intersects(rect, screenBounds)
+                val hasSize = rect.width() > MIN_ELEMENT_SIZE && rect.height() > MIN_ELEMENT_SIZE
+
+                var currentElement: ElementNode? = null
+
+                if (isInScreen && hasSize) {
+                    val text = node.text?.toString() ?: ""
+                    val contentDesc = node.contentDescription?.toString() ?: ""
+                    val className = node.className?.toString() ?: ""
+                    val viewId = node.viewIdResourceName ?: ""
+
+                    val displayText = when {
+                        text.isNotEmpty() -> text
+                        contentDesc.isNotEmpty() -> contentDesc
+                        viewId.isNotEmpty() -> viewId.substringAfterLast('/')
+                        else -> className.substringAfterLast('.')
+                    }
+
+                    val id = ElementNode.createId(rect, className.substringAfterLast('.'), displayText)
+
+                    val nodeCopy = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        AccessibilityNodeInfo(node)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        AccessibilityNodeInfo.obtain(node)
+                    }
+                    currentElement = ElementNode(
+                        nodeCopy,
+                        Rect(rect),
+                        displayText,
+                        className.substringAfterLast('.'),
                         windowLayer,
-                        childParent,
-                        rootElements,
-                        indexCounter
+                        System.currentTimeMillis(),
+                        id
                     )
-                } finally {
-                    childNode.recycle()
+
+                    // Assign unique index
+                    currentElement.overlayIndex = indexCounter.getNext()
+
+                    if (parent != null) {
+                        parent.addChild(currentElement)
+                    } else {
+                        rootElements.add(currentElement)
+                    }
                 }
+
+                // Recursively process children
+                val childParent = currentElement ?: parent
+                val childCount = try {
+                    node.childCount
+                } catch (e: RuntimeException) {
+                    Log.e(TAG, "Unable to read child count for accessibility node $nodeKey: ${e.message}", e)
+                    0
+                }
+                for (i in 0 until childCount) {
+                    val childNode = try {
+                        node.getChild(i)
+                    } catch (e: RuntimeException) {
+                        Log.e(
+                            TAG,
+                            "Unable to read child accessibility node index=$i parent=$nodeKey: ${e.message}",
+                            e,
+                        )
+                        null
+                    } ?: continue
+
+                    if (childNode === node) {
+                        Log.w(TAG, "Skipping child accessibility node that references its parent: $nodeKey")
+                        continue
+                    }
+
+                    if (AccessibilityTraversalGuard.isActiveNodeReference(childNode, activeNodePath)) {
+                        Log.w(TAG, "Skipping child accessibility node that references an active ancestor: $nodeKey")
+                        continue
+                    }
+
+                    try {
+                        collectVisibleElements(
+                            childNode,
+                            windowLayer,
+                            childParent,
+                            rootElements,
+                            indexCounter,
+                            depth + 1,
+                            activeNodePath
+                        )
+                    } finally {
+                        childNode.recycle()
+                    }
+                }
+            } finally {
+                AccessibilityTraversalGuard.leaveActivePath(node, activeNodePath)
             }
 
         } catch (e: Exception) {
@@ -1480,15 +1552,36 @@ class MobilerunAccessibilityService : AccessibilityService(), ConfigManager.Conf
     }
 
     private fun addElementAndChildrenToOverlay(element: ElementNode, depth: Int) {
-        overlayManager.addElement(
-            text = element.text,
-            rect = element.rect,
-            type = element.className,
-            index = element.overlayIndex
-        )
+        addElementAndChildrenToOverlay(element, depth, identityElementSet())
+    }
 
-        for (child in element.children) {
-            addElementAndChildrenToOverlay(child, depth + 1)
+    private fun addElementAndChildrenToOverlay(
+        element: ElementNode,
+        depth: Int,
+        visited: MutableSet<ElementNode>
+    ) {
+        if (!visited.add(element)) {
+            Log.w(TAG, "Skipping cyclic overlay element: ${element.redactedLogIdentifier()}")
+            return
         }
+
+        try {
+            overlayManager.addElement(
+                text = element.text,
+                rect = element.rect,
+                type = element.className,
+                index = element.overlayIndex
+            )
+
+            for (child in element.children) {
+                addElementAndChildrenToOverlay(child, depth + 1, visited)
+            }
+        } finally {
+            visited.remove(element)
+        }
+    }
+
+    private fun identityElementSet(): MutableSet<ElementNode> {
+        return Collections.newSetFromMap(IdentityHashMap())
     }
 }

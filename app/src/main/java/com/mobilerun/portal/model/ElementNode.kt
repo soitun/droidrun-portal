@@ -2,6 +2,8 @@ package com.mobilerun.portal.model
 
 import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
+import java.util.Collections
+import java.util.IdentityHashMap
 import kotlin.math.max
 import kotlin.math.min
 
@@ -63,6 +65,15 @@ data class ElementNode(
         return text.isNotEmpty() && !nodeInfo.isClickable
     }
 
+    fun redactedLogIdentifier(): String {
+        return "class=$className " +
+            "bounds=${rect.left},${rect.top},${rect.right},${rect.bottom} " +
+            "windowLayer=$windowLayer " +
+            "clickableIndex=$clickableIndex " +
+            "overlayIndex=$overlayIndex " +
+            "identity=${System.identityHashCode(this)}"
+    }
+
     // Calculate nesting level (depth in the hierarchy)
     fun calculateNestingLevel(): Int {
         if (nestingLevel > 0) {
@@ -71,8 +82,9 @@ data class ElementNode(
 
         var current = this
         var level = 0
+        val visited = identitySet()
 
-        while (current.parent != null) {
+        while (current.parent != null && visited.add(current)) {
             level++
             current = current.parent!!
         }
@@ -84,7 +96,8 @@ data class ElementNode(
     // Get the root ancestor
     fun getRootAncestor(): ElementNode {
         var current = this
-        while (current.parent != null) {
+        val visited = identitySet()
+        while (current.parent != null && visited.add(current)) {
             current = current.parent!!
         }
         return current
@@ -92,6 +105,10 @@ data class ElementNode(
 
     // Add a child node
     fun addChild(child: ElementNode) {
+        if (child === this || hasAncestor(child)) {
+            return
+        }
+
         if (!children.contains(child)) {
             children.add(child)
             child.parent = this
@@ -107,22 +124,57 @@ data class ElementNode(
     // Get all descendants (children, grandchildren, etc.)
     fun getAllDescendants(): List<ElementNode> {
         val descendants = mutableListOf<ElementNode>()
-        for (child in children) {
-            descendants.add(child)
-            descendants.addAll(child.getAllDescendants())
-        }
+        collectDescendants(descendants, identitySet())
         return descendants
+    }
+
+    private fun collectDescendants(
+        descendants: MutableList<ElementNode>,
+        visited: MutableSet<ElementNode>
+    ) {
+        if (!visited.add(this)) {
+            return
+        }
+
+        try {
+            for (child in children) {
+                if (visited.contains(child)) {
+                    continue
+                }
+                descendants.add(child)
+                child.collectDescendants(descendants, visited)
+            }
+        } finally {
+            visited.remove(this)
+        }
     }
 
     // Get path from root to this node
     fun getPathFromRoot(): List<ElementNode> {
         val path = mutableListOf<ElementNode>()
         var current: ElementNode? = this
-        while (current != null) {
+        val visited = identitySet()
+        while (current != null && visited.add(current)) {
             path.add(0, current)
             current = current.parent
         }
         return path
+    }
+
+    private fun hasAncestor(candidate: ElementNode): Boolean {
+        var current = parent
+        val visited = identitySet()
+        while (current != null && visited.add(current)) {
+            if (current === candidate) {
+                return true
+            }
+            current = current.parent
+        }
+        return false
+    }
+
+    private fun identitySet(): MutableSet<ElementNode> {
+        return Collections.newSetFromMap(IdentityHashMap())
     }
 
     override fun toString(): String {

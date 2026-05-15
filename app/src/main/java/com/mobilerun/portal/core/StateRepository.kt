@@ -1,6 +1,7 @@
 package com.mobilerun.portal.core
 
 import android.graphics.Rect
+import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.mobilerun.portal.service.MobilerunAccessibilityService
@@ -9,6 +10,9 @@ import com.mobilerun.portal.model.PhoneState
 import org.json.JSONObject
 
 class StateRepository(private val service: MobilerunAccessibilityService?) {
+    companion object {
+        private const val TAG = "StateRepository"
+    }
 
     val hasAccessibilityService: Boolean
         get() = service != null
@@ -17,13 +21,28 @@ class StateRepository(private val service: MobilerunAccessibilityService?) {
 
     fun getFullTree(filter: Boolean): JSONObject? {
         val svc = service ?: return null
-        val root = svc.rootInActiveWindow ?: pickFallbackRoot(svc) ?: return null
+        val root = getActiveRoot(svc) ?: pickFallbackRoot(svc) ?: return null
         val bounds = if (filter) svc.getScreenBounds() else null
         return AccessibilityTreeBuilder.buildFullAccessibilityTreeJson(root, bounds)
     }
 
+    private fun getActiveRoot(svc: MobilerunAccessibilityService): AccessibilityNodeInfo? {
+        return try {
+            svc.rootInActiveWindow
+        } catch (e: RuntimeException) {
+            Log.e(TAG, "Unable to read active accessibility root: ${e.message}", e)
+            null
+        }
+    }
+
     private fun pickFallbackRoot(svc: MobilerunAccessibilityService): AccessibilityNodeInfo? {
-        val windows = svc.windows ?: return null
+        val windows = try {
+            svc.windows
+        } catch (e: RuntimeException) {
+            Log.e(TAG, "Unable to read accessibility windows: ${e.message}", e)
+            null
+        } ?: return null
+
         return try {
             windows.sortedWith(
                 compareBy<AccessibilityWindowInfo> { fallbackWindowTypePriority(it) }
@@ -31,7 +50,18 @@ class StateRepository(private val service: MobilerunAccessibilityService?) {
             )
                 .asSequence()
                 .filter { isUserFacingWindow(it) }
-                .mapNotNull { it.root }
+                .mapNotNull { window ->
+                    try {
+                        window.root
+                    } catch (e: RuntimeException) {
+                        Log.e(
+                            TAG,
+                            "Unable to read accessibility window root layer=${window.layer}: ${e.message}",
+                            e,
+                        )
+                        null
+                    }
+                }
                 .firstOrNull()
         } finally {
             windows.forEach { it.recycle() }
