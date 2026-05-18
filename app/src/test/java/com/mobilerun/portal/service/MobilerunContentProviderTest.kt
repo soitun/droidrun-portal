@@ -7,6 +7,11 @@ import com.mobilerun.portal.api.ApiResponse
 import com.mobilerun.portal.config.ConfigManager
 import com.mobilerun.portal.keepalive.KeepAliveController
 import com.mobilerun.portal.keepalive.KeepAliveStartupException
+import com.mobilerun.portal.state.ConnectionState
+import com.mobilerun.portal.taskprompt.PortalActiveTaskRecord
+import com.mobilerun.portal.taskprompt.PortalTaskLaunchCoordinator
+import com.mobilerun.portal.taskprompt.PortalTaskSettings
+import com.mobilerun.portal.taskprompt.PortalTaskTracking
 import io.mockk.Runs
 import io.mockk.every
 import io.mockk.just
@@ -22,6 +27,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MobilerunContentProviderTest {
     @Before
@@ -425,5 +431,376 @@ class MobilerunContentProviderTest {
         assertTrue(ensureCalled)
         verify(exactly = 0) { configManager.setWebSocketPortWithNotification(any()) }
         verify(exactly = 0) { configManager.setWebSocketEnabledWithNotification(any()) }
+    }
+
+    @Test
+    fun handleCloudConnectInsert_storesApiKeyAndStartsReverseService() {
+        val context = mockk<Context>(relaxed = true)
+        val configManager = mockk<ConfigManager>(relaxed = true)
+        val defaultUrl = "wss://api.mobilerun.ai/v1/providers/personal/join"
+        val started = AtomicBoolean(false)
+
+        every { configManager.defaultReverseConnectionUrl } returns defaultUrl
+
+        val result = handleCloudConnectInsert(
+            providerContext = context,
+            configManager = configManager,
+            values = null,
+            readStringValue = { _, key ->
+                when (key) {
+                    "api_key" -> " real-token "
+                    else -> null
+                }
+            },
+            startReverseConnectionService = { _, _ ->
+                started.set(true)
+            },
+        )
+
+        assertEquals(ApiResponse.Success("Cloud connection requested"), result)
+        assertTrue(started.get())
+        verifySequence {
+            configManager.defaultReverseConnectionUrl
+            configManager.reverseConnectionUrl = defaultUrl
+            configManager.reverseConnectionToken = "real-token"
+            configManager.forceLoginOnNextConnect = false
+            configManager.reverseConnectionEnabled = true
+        }
+    }
+
+    @Test
+    fun handleCloudConnectInsert_acceptsTokenAliasAndBase64Url() {
+        val context = mockk<Context>(relaxed = true)
+        val configManager = mockk<ConfigManager>(relaxed = true)
+        val url = "wss://staging.mobilerun.ai/v1/providers/personal/join"
+        val started = AtomicBoolean(false)
+        val values = mockk<ContentValues>(relaxed = true)
+
+        mockkStatic(android.util.Base64::class)
+        every { values.containsKey("token_base64") } returns true
+        every { values.getAsString("token_base64") } returns "encoded-token"
+        every { values.containsKey("url_base64") } returns true
+        every { values.getAsString("url_base64") } returns "encoded-url"
+        every { android.util.Base64.decode("encoded-token", android.util.Base64.DEFAULT) } returns
+            " aliased-token ".toByteArray()
+        every { android.util.Base64.decode("encoded-url", android.util.Base64.DEFAULT) } returns
+            url.toByteArray()
+
+        val result = handleCloudConnectInsert(
+            providerContext = context,
+            configManager = configManager,
+            values = values,
+            startReverseConnectionService = { _, _ ->
+                started.set(true)
+            },
+        )
+
+        assertEquals(ApiResponse.Success("Cloud connection requested"), result)
+        assertTrue(started.get())
+        verifySequence {
+            configManager.reverseConnectionUrl = url
+            configManager.reverseConnectionToken = "aliased-token"
+            configManager.forceLoginOnNextConnect = false
+            configManager.reverseConnectionEnabled = true
+        }
+    }
+
+    @Test
+    fun handleCloudConnectInsert_rejectsMissingApiKey() {
+        val configManager = mockk<ConfigManager>(relaxed = true)
+
+        val result = handleCloudConnectInsert(
+            providerContext = mockk(relaxed = true),
+            configManager = configManager,
+            values = null,
+            readStringValue = { _, _ -> null },
+            startReverseConnectionService = { _, _ -> },
+        )
+
+        assertEquals(ApiResponse.Error("Missing required value: api_key"), result)
+        verify(exactly = 0) { configManager.reverseConnectionToken = any() }
+        verify(exactly = 0) { configManager.reverseConnectionEnabled = any() }
+    }
+
+    @Test
+    fun handleCloudConnectInsert_rejectsUnsupportedUrl() {
+        val configManager = mockk<ConfigManager>(relaxed = true)
+
+        val result = handleCloudConnectInsert(
+            providerContext = mockk(relaxed = true),
+            configManager = configManager,
+            values = null,
+            readStringValue = { _, key ->
+                when (key) {
+                    "api_key" -> "real-token"
+                    "url" -> "wss://api.mobilerun.ai/ws"
+                    else -> null
+                }
+            },
+            startReverseConnectionService = { _, _ -> },
+        )
+
+        assertEquals(
+            ApiResponse.Error("Cloud connection URL must end in /v1/providers/personal/join"),
+            result,
+        )
+        verify(exactly = 0) { configManager.reverseConnectionToken = any() }
+        verify(exactly = 0) { configManager.reverseConnectionEnabled = any() }
+    }
+
+    @Test
+    fun handleReverseConnectionConfigInsert_returnsErrorWhenReconnectStartThrows() {
+        val context = mockk<Context>()
+        val values = mockk<ContentValues>()
+        val configManager = mockk<ConfigManager>(relaxed = true)
+
+        every { context.applicationContext } returns context
+        every { values.getAsBoolean("enabled") } returns true
+
+        val result = handleReverseConnectionConfigInsert(
+            providerContext = context,
+            configManager = configManager,
+            values = values,
+            readStringValue = { _, _ -> null },
+            startReverseConnectionService = { _, _ ->
+                throw IllegalStateException("start failed")
+            },
+        )
+
+        assertEquals(ApiResponse.Error("Exception: start failed"), result)
+    }
+
+    @Test
+    fun buildCloudStatusResponse_reportsStateAndRedactsToken() {
+        val configManager = mockk<ConfigManager>()
+        every { configManager.reverseConnectionToken } returns "super-secret"
+        every { configManager.deviceID } returns "device-123"
+        every { configManager.reverseConnectionUrlOrDefault } returns
+            "wss://api.mobilerun.ai/v1/providers/personal/join"
+        every { configManager.activePortalTask } returns null
+
+        val result = buildCloudStatusResponse(
+            configManager = configManager,
+            connectionStateProvider = { ConnectionState.CONNECTED },
+        )
+
+        assertTrue(result is ApiResponse.RawObject)
+        val json = (result as ApiResponse.RawObject).json
+        assertEquals("CONNECTED", json.getString("connectionState"))
+        assertTrue(json.getBoolean("tokenPresent"))
+        assertEquals("device-123", json.getString("deviceId"))
+        assertFalse(json.toString().contains("super-secret"))
+    }
+
+    @Test
+    fun handleCloudTaskLaunchInsert_returnsTaskIdOnSuccess() {
+        val context = mockk<Context>(relaxed = true)
+        val configManager = mockk<ConfigManager>()
+        val defaultSettings = PortalTaskSettings()
+        val record = PortalActiveTaskRecord(
+            taskId = "task-123",
+            promptPreview = "Open Settings",
+            startedAtMs = 1_000L,
+            executionTimeoutSec = 100,
+            pollDeadlineMs = 101_000L,
+        )
+
+        every { configManager.reverseConnectionToken } returns "real-token"
+        every { configManager.reverseConnectionUrlOrDefault } returns
+            "wss://api.mobilerun.ai/v1/providers/personal/join"
+        every { configManager.activePortalTask } returns null
+        every { configManager.taskPromptSettings } returns defaultSettings
+        every { configManager.taskPromptReturnToPortal } returns false
+
+        val result = handleCloudTaskLaunchInsert(
+            providerContext = context,
+            configManager = configManager,
+            values = null,
+            readStringValue = { _, key ->
+                when (key) {
+                    "prompt" -> "Open Settings"
+                    else -> null
+                }
+            },
+            connectionStateProvider = { ConnectionState.CONNECTED },
+            taskLaunchInvoker = CloudTaskLaunchInvoker { prompt, settings, metadata, skipBusyCheck, memoryNamespace, onComplete ->
+                assertEquals("Open Settings", prompt)
+                assertEquals(defaultSettings, settings)
+                assertFalse(metadata.returnToPortalOnTerminal)
+                assertFalse(skipBusyCheck)
+                assertEquals(null, memoryNamespace)
+                onComplete(PortalTaskLaunchCoordinator.Result.Success(record))
+            },
+            timeoutMs = 50L,
+        )
+
+        assertTrue(result is ApiResponse.RawObject)
+        val json = (result as ApiResponse.RawObject).json
+        assertEquals("task-123", json.getString("task_id"))
+        assertEquals("created", json.getString("status"))
+    }
+
+    @Test
+    fun handleCloudTaskLaunchInsert_rejectsMissingKey() {
+        val configManager = mockk<ConfigManager>()
+        every { configManager.reverseConnectionToken } returns ""
+
+        val result = handleCloudTaskLaunchInsert(
+            providerContext = mockk(relaxed = true),
+            configManager = configManager,
+            values = null,
+            readStringValue = { _, _ -> "Open Settings" },
+            connectionStateProvider = { ConnectionState.CONNECTED },
+            taskLaunchInvoker = CloudTaskLaunchInvoker { _, _, _, _, _, _ -> },
+            timeoutMs = 50L,
+        )
+
+        assertEquals(ApiResponse.Error("Task launch requires a Mobilerun API key."), result)
+    }
+
+    @Test
+    fun handleCloudTaskLaunchInsert_rejectsUnsupportedUrl() {
+        val configManager = mockk<ConfigManager>()
+        every { configManager.reverseConnectionToken } returns "real-token"
+        every { configManager.reverseConnectionUrlOrDefault } returns "wss://api.mobilerun.ai/ws"
+
+        val result = handleCloudTaskLaunchInsert(
+            providerContext = mockk(relaxed = true),
+            configManager = configManager,
+            values = null,
+            readStringValue = { _, _ -> "Open Settings" },
+            connectionStateProvider = { ConnectionState.CONNECTED },
+            taskLaunchInvoker = CloudTaskLaunchInvoker { _, _, _, _, _, _ -> },
+            timeoutMs = 50L,
+        )
+
+        assertEquals(
+            ApiResponse.Error("Task launch only supports WebSocket URLs ending in /v1/providers/personal/join."),
+            result,
+        )
+    }
+
+    @Test
+    fun handleCloudTaskLaunchInsert_rejectsDisconnectedCloud() {
+        val configManager = mockk<ConfigManager>()
+        every { configManager.reverseConnectionToken } returns "real-token"
+        every { configManager.reverseConnectionUrlOrDefault } returns
+            "wss://api.mobilerun.ai/v1/providers/personal/join"
+
+        val result = handleCloudTaskLaunchInsert(
+            providerContext = mockk(relaxed = true),
+            configManager = configManager,
+            values = null,
+            readStringValue = { _, _ -> "Open Settings" },
+            connectionStateProvider = { ConnectionState.DISCONNECTED },
+            taskLaunchInvoker = CloudTaskLaunchInvoker { _, _, _, _, _, _ -> },
+            timeoutMs = 50L,
+        )
+
+        assertEquals(ApiResponse.Error("Cloud connection is not connected"), result)
+    }
+
+    @Test
+    fun handleCloudTaskLaunchInsert_rejectsBlankPrompt() {
+        val configManager = mockk<ConfigManager>()
+        every { configManager.reverseConnectionToken } returns "real-token"
+        every { configManager.reverseConnectionUrlOrDefault } returns
+            "wss://api.mobilerun.ai/v1/providers/personal/join"
+
+        val result = handleCloudTaskLaunchInsert(
+            providerContext = mockk(relaxed = true),
+            configManager = configManager,
+            values = null,
+            readStringValue = { _, _ -> "   " },
+            connectionStateProvider = { ConnectionState.CONNECTED },
+            taskLaunchInvoker = CloudTaskLaunchInvoker { _, _, _, _, _, _ -> },
+            timeoutMs = 50L,
+        )
+
+        assertEquals(ApiResponse.Error("Missing required value: prompt"), result)
+    }
+
+    @Test
+    fun handleCloudTaskLaunchInsert_rejectsActiveBlockingTask() {
+        val configManager = mockk<ConfigManager>()
+        val values = mockk<ContentValues>()
+        val launchCalled = AtomicBoolean(false)
+        val activeTask = PortalActiveTaskRecord(
+            taskId = "task-active",
+            promptPreview = "Running",
+            startedAtMs = 1_000L,
+            executionTimeoutSec = 100,
+            pollDeadlineMs = 101_000L,
+            lastStatus = PortalTaskTracking.STATUS_RUNNING,
+        )
+
+        every { configManager.reverseConnectionToken } returns "real-token"
+        every { configManager.reverseConnectionUrlOrDefault } returns
+            "wss://api.mobilerun.ai/v1/providers/personal/join"
+        every { configManager.activePortalTask } returns activeTask
+        every { values.getAsBoolean("skip_busy_check") } returns true
+
+        val result = handleCloudTaskLaunchInsert(
+            providerContext = mockk(relaxed = true),
+            configManager = configManager,
+            values = values,
+            readStringValue = { _, _ -> "Open Settings" },
+            connectionStateProvider = { ConnectionState.CONNECTED },
+            taskLaunchInvoker = CloudTaskLaunchInvoker { _, _, _, _, _, _ ->
+                launchCalled.set(true)
+            },
+            timeoutMs = 50L,
+        )
+
+        assertEquals(ApiResponse.Error("A Mobilerun task is already running"), result)
+        assertFalse(launchCalled.get())
+    }
+
+    @Test
+    fun handleCloudTaskLaunchInsert_returnsTimeoutWhenCloudDoesNotRespond() {
+        val configManager = mockk<ConfigManager>()
+        every { configManager.reverseConnectionToken } returns "real-token"
+        every { configManager.reverseConnectionUrlOrDefault } returns
+            "wss://api.mobilerun.ai/v1/providers/personal/join"
+        every { configManager.activePortalTask } returns null
+        every { configManager.taskPromptSettings } returns PortalTaskSettings()
+        every { configManager.taskPromptReturnToPortal } returns false
+
+        val result = handleCloudTaskLaunchInsert(
+            providerContext = mockk(relaxed = true),
+            configManager = configManager,
+            values = null,
+            readStringValue = { _, _ -> "Open Settings" },
+            connectionStateProvider = { ConnectionState.CONNECTED },
+            taskLaunchInvoker = CloudTaskLaunchInvoker { _, _, _, _, _, _ -> },
+            timeoutMs = 1L,
+        )
+
+        assertEquals(ApiResponse.Error("Timed out waiting for Mobilerun task launch"), result)
+    }
+
+    @Test
+    fun handleCloudTaskLaunchInsert_returnsCloudError() {
+        val configManager = mockk<ConfigManager>()
+        every { configManager.reverseConnectionToken } returns "real-token"
+        every { configManager.reverseConnectionUrlOrDefault } returns
+            "wss://api.mobilerun.ai/v1/providers/personal/join"
+        every { configManager.activePortalTask } returns null
+        every { configManager.taskPromptSettings } returns PortalTaskSettings()
+        every { configManager.taskPromptReturnToPortal } returns false
+
+        val result = handleCloudTaskLaunchInsert(
+            providerContext = mockk(relaxed = true),
+            configManager = configManager,
+            values = null,
+            readStringValue = { _, _ -> "Open Settings" },
+            connectionStateProvider = { ConnectionState.CONNECTED },
+            taskLaunchInvoker = CloudTaskLaunchInvoker { _, _, _, _, _, onComplete ->
+                onComplete(PortalTaskLaunchCoordinator.Result.Error("Cloud rejected task"))
+            },
+            timeoutMs = 50L,
+        )
+
+        assertEquals(ApiResponse.Error("Cloud rejected task"), result)
     }
 }

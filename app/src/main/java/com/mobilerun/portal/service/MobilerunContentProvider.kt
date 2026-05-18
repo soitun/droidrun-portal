@@ -14,13 +14,25 @@ import android.util.Log
 import androidx.core.net.toUri
 import com.mobilerun.portal.api.ApiHandler
 import com.mobilerun.portal.api.ApiResponse
+import com.mobilerun.portal.config.CloudTokenNormalizer
 import com.mobilerun.portal.config.ConfigManager
 import com.mobilerun.portal.core.StateRepository
 import com.mobilerun.portal.input.MobilerunKeyboardIME
 import com.mobilerun.portal.keepalive.KeepAliveController
 import com.mobilerun.portal.keepalive.KeepAliveStartupException
+import com.mobilerun.portal.state.ConnectionState
+import com.mobilerun.portal.state.ConnectionStateManager
+import com.mobilerun.portal.taskprompt.PortalCloudClient
+import com.mobilerun.portal.taskprompt.PortalTaskLaunchCoordinator
+import com.mobilerun.portal.taskprompt.PortalTaskLaunchMetadata
+import com.mobilerun.portal.taskprompt.PortalTaskSettings
+import com.mobilerun.portal.taskprompt.PortalTaskTracking
+import com.mobilerun.portal.taskprompt.TaskPromptSettingsConstraints
 import com.mobilerun.portal.triggers.TriggerApi
 import com.mobilerun.portal.triggers.TriggerApiResult
+import org.json.JSONObject
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 internal fun handleKeepScreenAwakeInsert(
     providerContext: Context,
@@ -187,6 +199,276 @@ internal fun handleWebSocketServerToggleInsert(
     return ApiResponse.Success("WebSocket server ${if (enabled) "enabled" else "disabled"} on port $port")
 }
 
+internal fun readProviderStringValue(
+    values: ContentValues?,
+    key: String,
+    logTag: String,
+): String? {
+    if (values == null) return null
+    if (values.containsKey(key)) return values.getAsString(key)
+
+    val base64Key = "${key}_base64"
+    if (values.containsKey(base64Key)) {
+        val encoded = values.getAsString(base64Key)
+        return try {
+            String(Base64.decode(encoded, Base64.DEFAULT))
+        } catch (e: Exception) {
+            Log.e(logTag, "Failed to decode base64 for $key", e)
+            null
+        }
+    }
+    return null
+}
+
+internal fun interface CloudTaskLaunchInvoker {
+    fun launch(
+        prompt: String,
+        settings: PortalTaskSettings,
+        metadata: PortalTaskLaunchMetadata,
+        skipBusyCheck: Boolean,
+        memoryNamespace: String?,
+        onComplete: (PortalTaskLaunchCoordinator.Result) -> Unit,
+    )
+}
+
+internal fun handleCloudConnectInsert(
+    providerContext: Context?,
+    configManager: ConfigManager,
+    values: ContentValues?,
+    readStringValue: (ContentValues?, String) -> String? = { contentValues, key ->
+        readProviderStringValue(contentValues, key, "MobilerunContentProvider")
+    },
+    beforeEnable: () -> Unit = {},
+    startReverseConnectionService: (Context, Intent) -> Unit = { context, intent ->
+        context.startForegroundService(intent)
+    },
+): ApiResponse {
+    val appContext = providerContext?.applicationContext
+        ?: return ApiResponse.Error("context unavailable")
+    val apiKey = sequenceOf("api_key", "token")
+        .mapNotNull { key -> readStringValue(values, key) }
+        .mapNotNull { value -> CloudTokenNormalizer.normalize(value) }
+        .firstOrNull()
+        ?: return ApiResponse.Error("Missing required value: api_key")
+    val url = sequenceOf("url")
+        .mapNotNull { key -> readStringValue(values, key)?.trim()?.takeIf { it.isNotBlank() } }
+        .firstOrNull()
+        ?: configManager.defaultReverseConnectionUrl
+
+    if (PortalCloudClient.deriveRestBaseUrl(url) == null) {
+        return ApiResponse.Error("Cloud connection URL must end in /v1/providers/personal/join")
+    }
+
+    return try {
+        configManager.reverseConnectionUrl = url
+        configManager.reverseConnectionToken = apiKey
+        configManager.forceLoginOnNextConnect = false
+        beforeEnable()
+        configManager.reverseConnectionEnabled = true
+        val serviceIntent = Intent(
+            ReverseConnectionService.ACTION_RECONNECT,
+            null,
+            appContext,
+            ReverseConnectionService::class.java,
+        )
+        startReverseConnectionService(appContext, serviceIntent)
+        ApiResponse.Success("Cloud connection requested")
+    } catch (e: Exception) {
+        ApiResponse.Error("Could not start cloud connection: ${e.message}")
+    }
+}
+
+internal fun buildCloudStatusResponse(
+    configManager: ConfigManager,
+    connectionStateProvider: () -> ConnectionState = { ConnectionStateManager.getState() },
+): ApiResponse {
+    val activeTask = configManager.activePortalTask
+    val json = JSONObject().apply {
+        put("connectionState", connectionStateProvider().name)
+        put("tokenPresent", configManager.reverseConnectionToken.trim().isNotEmpty())
+        put("deviceId", configManager.deviceID)
+        put("reverseConnectionUrl", configManager.reverseConnectionUrlOrDefault)
+        if (activeTask != null) {
+            put(
+                "activeTask",
+                JSONObject().apply {
+                    put("task_id", activeTask.taskId)
+                    put("taskId", activeTask.taskId)
+                    put("promptPreview", activeTask.promptPreview)
+                    put("status", activeTask.lastStatus)
+                    put("startedAtMs", activeTask.startedAtMs)
+                    put("pollDeadlineMs", activeTask.pollDeadlineMs)
+                },
+            )
+        } else {
+            put("activeTask", JSONObject.NULL)
+        }
+    }
+    return ApiResponse.RawObject(json)
+}
+
+internal fun handleCloudTaskLaunchInsert(
+    providerContext: Context?,
+    configManager: ConfigManager,
+    values: ContentValues?,
+    readStringValue: (ContentValues?, String) -> String? = { contentValues, key ->
+        readProviderStringValue(contentValues, key, "MobilerunContentProvider")
+    },
+    connectionStateProvider: () -> ConnectionState = { ConnectionStateManager.getState() },
+    taskLaunchInvoker: CloudTaskLaunchInvoker,
+    timeoutMs: Long = 30_000L,
+): ApiResponse {
+    if (providerContext?.applicationContext == null) {
+        return ApiResponse.Error("context unavailable")
+    }
+    if (configManager.reverseConnectionToken.trim().isBlank()) {
+        return ApiResponse.Error("Task launch requires a Mobilerun API key.")
+    }
+    if (PortalCloudClient.deriveRestBaseUrl(configManager.reverseConnectionUrlOrDefault) == null) {
+        return ApiResponse.Error(
+            "Task launch only supports WebSocket URLs ending in /v1/providers/personal/join.",
+        )
+    }
+    if (connectionStateProvider() != ConnectionState.CONNECTED) {
+        return ApiResponse.Error("Cloud connection is not connected")
+    }
+
+    val prompt = readStringValue(values, "prompt")?.trim().orEmpty()
+    if (prompt.isBlank()) {
+        return ApiResponse.Error("Missing required value: prompt")
+    }
+
+    val activeTask = configManager.activePortalTask
+    if (activeTask != null && PortalTaskTracking.isBlockingStatus(activeTask.lastStatus)) {
+        return ApiResponse.Error("A Mobilerun task is already running")
+    }
+
+    val settings = buildCloudTaskSettings(configManager.taskPromptSettings, values, readStringValue)
+    val metadata = PortalTaskLaunchMetadata(
+        returnToPortalOnTerminal = values?.getAsBoolean("return_to_portal")
+            ?: configManager.taskPromptReturnToPortal,
+    )
+    val memoryNamespace = readStringValue(values, "memory_namespace")
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+    val latch = CountDownLatch(1)
+    var launchResult: PortalTaskLaunchCoordinator.Result? = null
+
+    try {
+        taskLaunchInvoker.launch(
+            prompt,
+            settings,
+            metadata,
+            false,
+            memoryNamespace,
+        ) { result ->
+            launchResult = result
+            latch.countDown()
+        }
+    } catch (e: Exception) {
+        return ApiResponse.Error("Could not launch Mobilerun task: ${e.message}")
+    }
+
+    if (!latch.await(timeoutMs.coerceAtLeast(0L), TimeUnit.MILLISECONDS)) {
+        return ApiResponse.Error("Timed out waiting for Mobilerun task launch")
+    }
+
+    return when (val result = launchResult) {
+        is PortalTaskLaunchCoordinator.Result.Success -> ApiResponse.RawObject(
+            JSONObject().apply {
+                put("task_id", result.record.taskId)
+                put("taskId", result.record.taskId)
+                put("status", result.record.lastStatus)
+                put("promptPreview", result.record.promptPreview)
+            },
+        )
+
+        is PortalTaskLaunchCoordinator.Result.Error -> ApiResponse.Error(result.message)
+        PortalTaskLaunchCoordinator.Result.Busy -> ApiResponse.Error("A Mobilerun task is already running")
+        null -> ApiResponse.Error("Mobilerun task launch returned no result")
+    }
+}
+
+internal fun handleReverseConnectionConfigInsert(
+    providerContext: Context?,
+    configManager: ConfigManager,
+    values: ContentValues?,
+    readStringValue: (ContentValues?, String) -> String? = { contentValues, key ->
+        readProviderStringValue(contentValues, key, "MobilerunContentProvider")
+    },
+    startReverseConnectionService: (Context, Intent) -> Unit = { context, intent ->
+        context.startForegroundService(intent)
+    },
+    stopReverseConnectionService: (Context, Intent) -> Unit = { context, intent ->
+        context.stopService(intent)
+    },
+): ApiResponse {
+    return try {
+        val url = readStringValue(values, "url")
+        val token = readStringValue(values, "token")
+        val serviceKey = readStringValue(values, "service_key")
+        val enabled = values?.getAsBoolean("enabled")
+
+        var message = "Updated reverse connection config:"
+
+        if (url != null) {
+            configManager.reverseConnectionUrl = url
+            message += " url=$url"
+        }
+        if (token != null) {
+            configManager.reverseConnectionToken = token
+            message += " token=***"
+        }
+        if (serviceKey != null) {
+            configManager.reverseConnectionServiceKey = serviceKey
+            message += " service_key=***"
+        }
+        if (enabled != null) {
+            configManager.reverseConnectionEnabled = enabled
+            message += " enabled=$enabled"
+
+            val appContext = providerContext?.applicationContext
+                ?: throw IllegalStateException("context unavailable")
+            if (enabled) {
+                val serviceIntent = Intent(
+                    ReverseConnectionService.ACTION_RECONNECT,
+                    null,
+                    appContext,
+                    ReverseConnectionService::class.java,
+                )
+                startReverseConnectionService(appContext, serviceIntent)
+            } else {
+                val serviceIntent = Intent(appContext, ReverseConnectionService::class.java)
+                stopReverseConnectionService(appContext, serviceIntent)
+            }
+        }
+
+        ApiResponse.Success(message)
+    } catch (e: Exception) {
+        ApiResponse.Error("Exception: ${e.message}")
+    }
+}
+
+private fun buildCloudTaskSettings(
+    defaultSettings: PortalTaskSettings,
+    values: ContentValues?,
+    readStringValue: (ContentValues?, String) -> String?,
+): PortalTaskSettings {
+    var settings = defaultSettings
+    readStringValue(values, "llm_model")
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?.let { settings = settings.copy(llmModel = it) }
+    values?.getAsBoolean("reasoning")?.let { settings = settings.copy(reasoning = it) }
+    values?.getAsBoolean("vision")?.let { settings = settings.copy(vision = it) }
+    values?.getAsInteger("max_steps")?.let { settings = settings.copy(maxSteps = it) }
+    values?.getAsDouble("temperature")?.let { settings = settings.copy(temperature = it) }
+    values?.getAsInteger("execution_timeout")?.let {
+        settings = settings.copy(executionTimeout = it)
+    }
+    return TaskPromptSettingsConstraints.clamp(settings)
+}
+
 class MobilerunContentProvider : ContentProvider() {
     companion object {
         private const val TAG = "MobilerunContentProvider"
@@ -224,6 +506,9 @@ class MobilerunContentProvider : ContentProvider() {
         private const val SET_NO_A11Y_MODE = 31
         private const val CLIPBOARD_GET = 32
         private const val CLIPBOARD_SET = 33
+        private const val CLOUD_CONNECT = 34
+        private const val CLOUD_STATUS = 35
+        private const val CLOUD_TASKS_LAUNCH = 36
 
         private val uriMatcher = UriMatcher(UriMatcher.NO_MATCH).apply {
             addURI(AUTHORITY, "a11y_tree", A11Y_TREE)
@@ -259,6 +544,9 @@ class MobilerunContentProvider : ContentProvider() {
             addURI(AUTHORITY, "set_no_a11y_mode", SET_NO_A11Y_MODE)
             addURI(AUTHORITY, "clipboard/get", CLIPBOARD_GET)
             addURI(AUTHORITY, "clipboard/set", CLIPBOARD_SET)
+            addURI(AUTHORITY, "cloud/connect", CLOUD_CONNECT)
+            addURI(AUTHORITY, "cloud/status", CLOUD_STATUS)
+            addURI(AUTHORITY, "cloud/tasks/launch", CLOUD_TASKS_LAUNCH)
         }
     }
 
@@ -351,6 +639,7 @@ class MobilerunContentProvider : ContentProvider() {
             val response = when (match) {
                 VERSION -> ApiResponse.Success(getAppVersion())
                 AUTH_TOKEN -> ApiResponse.Text(configManager.authToken)
+                CLOUD_STATUS -> buildCloudStatusResponse(configManager)
                 SCREEN_KEEP_AWAKE_STATUS -> ApiResponse.RawObject(
                     KeepAliveController.getStatusJson(context ?: throw IllegalStateException("Provider context unavailable")),
                 )
@@ -423,20 +712,16 @@ class MobilerunContentProvider : ContentProvider() {
     }
 
     private fun getStringValue(values: ContentValues?, key: String): String? {
-        if (values == null) return null
-        if (values.containsKey(key)) return values.getAsString(key)
+        return readProviderStringValue(values, key, TAG)
+    }
 
-        val base64Key = "${key}_base64"
-        if (values.containsKey(base64Key)) {
-            val encoded = values.getAsString(base64Key)
-            return try {
-                String(Base64.decode(encoded, Base64.DEFAULT))
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to decode base64 for $key", e)
-                null
-            }
-        }
-        return null
+    private fun handleConfigureReverseConnectionInsert(values: ContentValues?): ApiResponse {
+        return handleReverseConnectionConfigInsert(
+            providerContext = context,
+            configManager = configManager,
+            values = values,
+            readStringValue = ::getStringValue,
+        )
     }
 
     override fun insert(uri: Uri, values: ContentValues?): Uri? {
@@ -445,6 +730,44 @@ class MobilerunContentProvider : ContentProvider() {
         val triggerResult = handleTriggerInsert(uri, values)
         if (triggerResult != null) {
             return mutationResultUri(triggerResult)
+        }
+
+        if (match == CLOUD_CONNECT) {
+            val response = handleCloudConnectInsert(
+                providerContext = context,
+                configManager = configManager,
+                values = values,
+            )
+            return responseToResultUri(response)
+        }
+
+        if (match == CLOUD_TASKS_LAUNCH) {
+            val providerContext = context
+            val response = handleCloudTaskLaunchInsert(
+                providerContext = providerContext,
+                configManager = configManager,
+                values = values,
+                taskLaunchInvoker = CloudTaskLaunchInvoker { prompt, settings, metadata, skipBusyCheck, memoryNamespace, onComplete ->
+                    if (providerContext == null) {
+                        onComplete(PortalTaskLaunchCoordinator.Result.Error("context unavailable"))
+                    } else {
+                        PortalTaskLaunchCoordinator(providerContext).launchPrompt(
+                            prompt = prompt,
+                            settings = settings,
+                            broadcastTaskStateChanged = true,
+                            metadata = metadata,
+                            skipBusyCheck = skipBusyCheck,
+                            memoryNamespace = memoryNamespace,
+                            onComplete = onComplete,
+                        )
+                    }
+                },
+            )
+            return cloudTaskLaunchResultUri(response)
+        }
+
+        if (match == CONFIGURE_REVERSE_CONNECTION) {
+            return responseToResultUri(handleConfigureReverseConnectionInsert(values))
         }
 
         if (match == SET_NO_A11Y_MODE) {
@@ -533,44 +856,6 @@ class MobilerunContentProvider : ContentProvider() {
                 OVERLAY_VISIBLE -> {
                     val visible = values?.getAsBoolean("visible") ?: true
                     handler.setOverlayVisible(visible)
-                }
-
-                CONFIGURE_REVERSE_CONNECTION -> {
-                    val url = getStringValue(values, "url")
-                    val token = getStringValue(values, "token")
-                    val serviceKey = getStringValue(values, "service_key")
-                    val enabled = values?.getAsBoolean("enabled")
-
-                    var message = "Updated reverse connection config:"
-
-                    if (url != null) {
-                        configManager.reverseConnectionUrl = url
-                        message += " url=$url"
-                    }
-                    if (token != null) {
-                        configManager.reverseConnectionToken = token
-                        message += " token=***"
-                    }
-                    if (serviceKey != null) {
-                        configManager.reverseConnectionServiceKey = serviceKey
-                        message += " service_key=***"
-                    }
-                    if (enabled != null) {
-                        configManager.reverseConnectionEnabled = enabled
-                        message += " enabled=$enabled"
-
-                        val serviceIntent = android.content.Intent(
-                            context,
-                            com.mobilerun.portal.service.ReverseConnectionService::class.java
-                        )
-                        if (enabled) {
-                            context!!.startForegroundService(serviceIntent)
-                        } else {
-                            context!!.stopService(serviceIntent)
-                        }
-                    }
-
-                    ApiResponse.Success(message)
                 }
 
                 TOGGLE_PRODUCTION_MODE -> {
@@ -671,6 +956,23 @@ class MobilerunContentProvider : ContentProvider() {
             else ->
                 "content://$AUTHORITY/result?status=error&message=${Uri.encode("Unsupported response type")}".toUri()
         }
+    }
+
+    private fun cloudTaskLaunchResultUri(response: ApiResponse): Uri {
+        if (response !is ApiResponse.RawObject) {
+            return responseToResultUri(response)
+        }
+        val taskId = response.json.optString("task_id", "")
+        val builder = Uri.Builder()
+            .scheme("content")
+            .authority(AUTHORITY)
+            .path("result")
+            .appendQueryParameter("status", "success")
+            .appendQueryParameter("message", "Task launched")
+        if (taskId.isNotBlank()) {
+            builder.appendQueryParameter("task_id", taskId)
+        }
+        return builder.build()
     }
 
     private fun <T> mapTriggerResult(

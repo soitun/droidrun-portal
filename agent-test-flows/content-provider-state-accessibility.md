@@ -11,6 +11,7 @@ Use this runbook to verify the content provider and accessibility state exposed 
 - Overlay visibility and overlay offset.
 - Screen keep-awake status and toggle.
 - Socket, WebSocket, reverse connection, no-a11y, and trigger provider endpoints.
+- Cloud provider endpoints: `cloud/status` always, plus `cloud/connect` and `cloud/tasks/launch` when a Mobilerun Cloud API key is available.
 
 ## Orientation Check
 
@@ -31,6 +32,7 @@ Record:
 - Parsed summary table.
 - `dumpsys display` or window display output.
 - Logcat only for failing rows.
+- For cloud provider rows, record only token presence, connection state, and redacted task ids.
 
 ## Notes
 
