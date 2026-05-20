@@ -72,10 +72,7 @@
         themes.xml and we can drop these aliases. Until then they map legacy names
         to the closest new-palette equivalent so the build stays green.
     -->
-    <color name="mobilerun_primary_dark">@color/mobilerun_primary</color>
-    <color name="mobilerun_primary_light">@color/mobilerun_accent</color>
     <color name="mobilerun_divider">@color/mobilerun_border</color>
-    <color name="mobilerun_text_secondary">@color/mobilerun_muted_foreground</color>
     <color name="mobilerun_text_light">@color/mobilerun_foreground</color>
     <color name="mobilerun_error">@color/mobilerun_destructive</color>
     <color name="mobilerun_success">@color/chart_5</color>
