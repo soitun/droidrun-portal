@@ -47,6 +47,7 @@ data class DashboardStats(
             PortalTaskTracking.STATUS_RUNNING to 0xFFCCA335.toInt(),
             PortalTaskTracking.STATUS_CREATED to 0xFF4A90D9.toInt(),
             PortalTaskTracking.STATUS_PAUSED to 0xFFB8A060.toInt(),
+            PortalTaskTracking.STATUS_TRACKING_TIMEOUT to 0xFF888888.toInt(),
         )
 
         private val STATUS_LABELS = mapOf(
@@ -57,6 +58,7 @@ data class DashboardStats(
             PortalTaskTracking.STATUS_RUNNING to "Running",
             PortalTaskTracking.STATUS_CREATED to "Created",
             PortalTaskTracking.STATUS_PAUSED to "Paused",
+            PortalTaskTracking.STATUS_TRACKING_TIMEOUT to "Tracking stopped",
         )
 
         fun compute(
@@ -118,9 +120,9 @@ data class DashboardStats(
                 .maxByOrNull { it.value }
                 ?.key
 
-            val lastTaskEpochMs = items.firstNotNullOfOrNull {
+            val lastTaskEpochMs = items.mapNotNull {
                 PortalTaskTimestampSupport.parseEpochMillis(it.createdAt)
-            }
+            }.maxOrNull()
             val lastTaskAgoMs = if (lastTaskEpochMs != null) {
                 (nowMs - lastTaskEpochMs).coerceAtLeast(0L)
             } else null

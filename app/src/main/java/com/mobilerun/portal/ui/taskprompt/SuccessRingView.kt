@@ -59,8 +59,13 @@ class SuccessRingView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val inset = strokeWidth / 2f + paddingLeft
-        oval.set(inset, inset, width - inset, height - inset)
+        val halfStroke = strokeWidth / 2f
+        oval.set(
+            halfStroke + paddingLeft,
+            halfStroke + paddingTop,
+            width - halfStroke - paddingRight,
+            height - halfStroke - paddingBottom,
+        )
 
         if (total == 0) {
             canvas.drawArc(oval, 0f, 360f, false, emptyPaint)
@@ -76,11 +81,17 @@ class SuccessRingView @JvmOverloads constructor(
         val totalGap = gapDegrees * slices.size
         val availableSweep = 360f - totalGap
         var startAngle = -90f
+        var sweepUsed = 0f
 
-        for (slice in slices) {
-            val sweep = slice.count.toFloat() / total * availableSweep
+        for ((i, slice) in slices.withIndex()) {
+            val sweep = if (i == slices.lastIndex) {
+                availableSweep - sweepUsed
+            } else {
+                slice.count.toFloat() / total * availableSweep
+            }
             slicePaint.color = slice.color
             canvas.drawArc(oval, startAngle, sweep, false, slicePaint)
+            sweepUsed += sweep
             startAngle += sweep + gapDegrees
         }
     }

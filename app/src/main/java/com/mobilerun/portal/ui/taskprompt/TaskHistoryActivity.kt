@@ -69,6 +69,8 @@ class TaskHistoryActivity : AppCompatActivity() {
     // Tab views
     private val tabLayout: TabLayout
         get() = binding.taskTabs
+    private val dashboardSwipeRefresh: androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        get() = binding.taskDashboardSwipeRefresh
     private val dashboardContainer: View
         get() = binding.taskDashboardContainer
     private val historyContainer: View
@@ -174,7 +176,7 @@ class TaskHistoryActivity : AppCompatActivity() {
     }
 
     private fun showHistoryTab() {
-        dashboardContainer.visibility = View.GONE
+        dashboardSwipeRefresh.visibility = View.GONE
         dashboardLoading.visibility = View.GONE
         dashboardError.visibility = View.GONE
         historyContainer.visibility = View.VISIBLE
@@ -187,6 +189,13 @@ class TaskHistoryActivity : AppCompatActivity() {
 
     private fun setupDashboardTab() {
         dashboardRetryButton.setOnClickListener { loadDashboard() }
+        dashboardSwipeRefresh.setColorSchemeColors(
+            ContextCompat.getColor(this, R.color.task_prompt_accent),
+        )
+        dashboardSwipeRefresh.setProgressBackgroundColorSchemeColor(
+            ContextCompat.getColor(this, R.color.background_card),
+        )
+        dashboardSwipeRefresh.setOnRefreshListener { refreshDashboard() }
     }
 
     private fun loadDashboard() {
@@ -244,21 +253,27 @@ class TaskHistoryActivity : AppCompatActivity() {
         if (tabLayout.selectedTabPosition != 0) return
 
         if (isDashboardLoading) {
-            dashboardContainer.visibility = View.GONE
-            dashboardLoading.visibility = View.VISIBLE
+            if (!dashboardSwipeRefresh.isRefreshing) {
+                dashboardSwipeRefresh.visibility = View.GONE
+                dashboardLoading.visibility = View.VISIBLE
+            } else {
+                dashboardLoading.visibility = View.GONE
+            }
             dashboardError.visibility = View.GONE
             return
         }
 
+        dashboardSwipeRefresh.isRefreshing = false
+
         val stats = dashboardStats
         if (stats == null) {
-            dashboardContainer.visibility = View.GONE
+            dashboardSwipeRefresh.visibility = View.GONE
             dashboardLoading.visibility = View.GONE
             dashboardError.visibility = View.VISIBLE
             return
         }
 
-        dashboardContainer.visibility = View.VISIBLE
+        dashboardSwipeRefresh.visibility = View.VISIBLE
         dashboardLoading.visibility = View.GONE
         dashboardError.visibility = View.GONE
 
