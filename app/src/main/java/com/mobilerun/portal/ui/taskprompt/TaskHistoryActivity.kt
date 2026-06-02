@@ -118,6 +118,7 @@ class TaskHistoryActivity : AppCompatActivity() {
     private var requestToken = 0
     private var errorMessage: String? = null
     private var hasLoadedHistory = false
+    private var loadedHistoryQuery: String? = null
 
     private var dataRequestToken = 0
     private var isDataLoading = false
@@ -182,15 +183,23 @@ class TaskHistoryActivity : AppCompatActivity() {
         dashboardLoading.visibility = View.GONE
         dashboardError.visibility = View.GONE
         historyContainer.visibility = View.VISIBLE
-        if (!hasLoadedHistory && !isInitialLoading) {
-            if (seedHistoryFromDashboard()) return
+        val query = currentHistoryQuery()
+        if (
+            !isInitialLoading &&
+            TaskHistoryQueryState.shouldLoadHistory(
+                hasLoadedHistory = hasLoadedHistory,
+                loadedHistoryQuery = loadedHistoryQuery,
+                currentQuery = query,
+            )
+        ) {
+            if (query.isBlank() && seedHistoryFromDashboard()) return
             loadTasks(reset = true)
         }
     }
 
     private fun seedHistoryFromDashboard(): Boolean {
         val cached = cachedTaskPage ?: return false
-        val query = searchInput.text?.toString()?.trim().orEmpty()
+        val query = currentHistoryQuery()
         if (query.isNotBlank()) return false
 
         items.clear()
@@ -198,10 +207,15 @@ class TaskHistoryActivity : AppCompatActivity() {
         currentPage = (cached.items.size + PAGE_SIZE - 1) / PAGE_SIZE
         hasNextPage = cached.total > cached.items.size
         hasLoadedHistory = true
+        loadedHistoryQuery = query
         errorMessage = null
         adapter.notifyDataSetChanged()
         renderState()
         return true
+    }
+
+    private fun currentHistoryQuery(): String {
+        return TaskHistoryQueryState.normalizeQuery(searchInput.text)
     }
 
     private fun configureSwipeRefresh(
@@ -459,7 +473,8 @@ class TaskHistoryActivity : AppCompatActivity() {
         renderState()
 
         val nextPage = if (reset) 1 else currentPage + 1
-        val query = searchInput.text?.toString()?.trim().orEmpty().takeIf { it.isNotBlank() }
+        val requestQuery = currentHistoryQuery()
+        val query = requestQuery.takeIf { it.isNotBlank() }
         val localRequestToken = ++requestToken
         portalCloudClient.listTasks(
             restBaseUrl = restBaseUrl,
@@ -480,6 +495,9 @@ class TaskHistoryActivity : AppCompatActivity() {
                     is PortalTaskHistoryResult.Success -> {
                         errorMessage = null
                         hasLoadedHistory = true
+                        if (reset) {
+                            loadedHistoryQuery = requestQuery
+                        }
                         if (reset) {
                             items.clear()
                         }
@@ -507,7 +525,7 @@ class TaskHistoryActivity : AppCompatActivity() {
     }
 
     private fun renderState() {
-        val query = searchInput.text?.toString()?.trim().orEmpty()
+        val query = currentHistoryQuery()
         val showLoading = isInitialLoading && items.isEmpty()
         val showList = items.isNotEmpty()
         val showEmpty = !showLoading && !showList
