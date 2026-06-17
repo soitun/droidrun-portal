@@ -49,6 +49,44 @@ class ApiHandlerTest {
     }
 
     @Test
+    fun treeReads_returnErrorWhenServiceConnectedButNoActiveRoot() {
+        // Regression (#17 freeze): the a11y service is connected
+        // (hasAccessibilityService == true) but there is no active window/root
+        // (rootInActiveWindow null and no fallback window) and no elements.
+        // getTree/getState used to return Success with an empty list, which an
+        // agent misreads as "the screen has nothing on it". They must fail loud
+        // with a recovery hint instead.
+        val stateRepo = mockk<StateRepository>(relaxed = true)
+        every { stateRepo.hasAccessibilityService } returns true
+        every { stateRepo.getVisibleElements() } returns emptyList()
+        every { stateRepo.hasActiveRoot() } returns false
+        val handler = createHandler(stateRepo = stateRepo, ime = null)
+
+        val tree = handler.getTree()
+        val state = handler.getState()
+        assertEquals(true, tree is ApiResponse.Error)
+        assertEquals(true, state is ApiResponse.Error)
+        assertEquals(true, (tree as ApiResponse.Error).message.contains("empty"))
+        assertEquals(true, (state as ApiResponse.Error).message.contains("empty"))
+    }
+
+    @Test
+    fun treeReads_returnEmptySuccessWhenWindowPresentButNoSemanticNodes() {
+        // A window/root IS present but exposes no a11y elements — a Flutter,
+        // native game, or WebView surface with no semantic children. This is a
+        // valid screen, NOT the freeze, so getTree/getState must return Success
+        // (with an empty tree), never the recovery error.
+        val stateRepo = mockk<StateRepository>(relaxed = true)
+        every { stateRepo.hasAccessibilityService } returns true
+        every { stateRepo.getVisibleElements() } returns emptyList()
+        every { stateRepo.hasActiveRoot() } returns true
+        val handler = createHandler(stateRepo = stateRepo, ime = null)
+
+        assertEquals(true, handler.getTree() is ApiResponse.Success)
+        assertEquals(true, handler.getState() is ApiResponse.Success)
+    }
+
+    @Test
     fun nonAccessibilityReads_stillWorkWhenStateRepoHasNoService() {
         val handler = createHandler(stateRepo = StateRepository(service = null), ime = null)
 

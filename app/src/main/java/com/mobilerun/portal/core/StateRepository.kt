@@ -19,6 +19,20 @@ class StateRepository(private val service: MobilerunAccessibilityService?) {
 
     fun getVisibleElements(): List<ElementNode> = service?.getVisibleElements() ?: emptyList()
 
+    /**
+     * True when an accessibility root window is currently resolvable (active
+     * window or a user-facing fallback window). Lets callers tell a genuine
+     * "no active window" freeze apart from a window that simply exposes no
+     * semantic elements — e.g. a Flutter/game/WebView surface with no a11y
+     * children — which must NOT be treated as an error.
+     */
+    fun hasActiveRoot(): Boolean {
+        val svc = service ?: return false
+        val root = getActiveRoot(svc) ?: pickFallbackRoot(svc) ?: return false
+        root.recycle()
+        return true
+    }
+
     fun getFullTree(filter: Boolean): JSONObject? {
         val svc = service ?: return null
         val root = getActiveRoot(svc) ?: pickFallbackRoot(svc) ?: return null

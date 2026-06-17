@@ -75,6 +75,10 @@ class ApiHandler(
         private const val ENABLE_UI_STOP_FALLBACK = true
         private const val FORCE_STOP_SCREEN_READY_TIMEOUT_MS = 5000L
         private const val ACCESSIBILITY_SERVICE_NOT_AVAILABLE = "Accessibility service not available"
+        private const val EMPTY_TREE_MESSAGE =
+            "Accessibility tree is empty: the service is connected but returned no UI " +
+                "nodes (no active window / root filtered out). Toggle Mobilerun " +
+                "Accessibility off and on; reboot the device if it persists."
         private const val APP_LAUNCH_REQUIRES_ACCESSIBILITY = "App launch requires Accessibility service"
         const val ACTION_INSTALL_RESULT = "com.mobilerun.portal.action.INSTALL_RESULT"
         const val EXTRA_INSTALL_SUCCESS = "install_success"
@@ -139,6 +143,12 @@ class ApiHandler(
     fun getTree(): ApiResponse {
         requireAccessibilityService()?.let { return it }
         val elements = stateRepo.getVisibleElements()
+        // Empty only signals a fault when there is also no active window/root
+        // (the "tree died" freeze). A window with no semantic children — a
+        // Flutter/game/WebView surface — keeps returning an empty success.
+        if (elements.isEmpty() && !stateRepo.hasActiveRoot()) {
+            return ApiResponse.Error(EMPTY_TREE_MESSAGE)
+        }
         val json = elements.map { JsonBuilders.elementNodeToJson(it) }
         return ApiResponse.Success(JSONArray(json).toString())
     }
@@ -159,6 +169,9 @@ class ApiHandler(
     fun getState(): ApiResponse {
         requireAccessibilityService()?.let { return it }
         val elements = stateRepo.getVisibleElements()
+        if (elements.isEmpty() && !stateRepo.hasActiveRoot()) {
+            return ApiResponse.Error(EMPTY_TREE_MESSAGE)
+        }
         val treeJson = elements.map { JsonBuilders.elementNodeToJson(it) }
         val phoneStateJson = JsonBuilders.phoneStateToJson(stateRepo.getPhoneState())
 
