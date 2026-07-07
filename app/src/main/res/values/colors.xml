@@ -110,24 +110,32 @@
     <color name="task_prompt_stroke">@color/mobilerun_border</color>
     <color name="task_prompt_text_primary">@color/mobilerun_foreground</color>
     <color name="task_prompt_text_secondary">@color/mobilerun_muted_foreground</color>
-    <color name="task_prompt_accent">@color/mobilerun_accent</color>
-    <color name="task_prompt_accent_light">@color/mobilerun_accent</color>
+    <!--
+        task_prompt_accent* are used upstream as INTERACTIVE accents (tab
+        indicator, spinner tints, icon tints, submit button bg, cursor) and as
+        accent TEXT. mobilerun_accent is a pastel surface tint and is illegible
+        in those roles in light mode, so both route to primary instead.
+    -->
+    <color name="task_prompt_accent">@color/mobilerun_primary</color>
+    <color name="task_prompt_accent_light">@color/mobilerun_primary</color>
     <color name="task_prompt_error">@color/mobilerun_destructive</color>
     <color name="task_prompt_chip_info_bg">@color/mobilerun_muted</color>
     <color name="task_prompt_chip_success_bg">@color/mobilerun_muted</color>
-    <color name="task_prompt_chip_error_bg">@color/mobilerun_destructive</color>
+    <color name="task_prompt_chip_error_bg">@color/alert_error_tint</color>
     <color name="http_get">@color/mobilerun_primary</color>
     <color name="http_post">@color/chart_2</color>
 
-    <!-- Dashboard task status colors (from upstream 19b44e1; not yet token-mapped) -->
-    <color name="task_status_completed">#0D9373</color>
-    <color name="task_status_failed">#C0392B</color>
-    <color name="task_status_cancelled">#888888</color>
-    <color name="task_status_cancelling">#CCA335</color>
-    <color name="task_status_running">#CCA335</color>
-    <color name="task_status_created">#4A90D9</color>
-    <color name="task_status_paused">#B8A060</color>
-    <color name="task_status_tracking_timeout">#888888</color>
-    <color name="task_status_unknown">#555555</color>
-    <color name="task_status_ring_empty">#2A2A2A</color>
+    <!-- Dashboard task status colors (upstream 19b44e1), mapped onto tokens.
+         All resolve through tokens with values-night overrides, so they flip
+         with DayNight automatically. -->
+    <color name="task_status_completed">@color/status_success</color>
+    <color name="task_status_failed">@color/status_error</color>
+    <color name="task_status_cancelled">@color/mobilerun_muted_foreground</color>
+    <color name="task_status_cancelling">@color/mobilerun_warning</color>
+    <color name="task_status_running">@color/mobilerun_warning</color>
+    <color name="task_status_created">@color/chart_2</color>
+    <color name="task_status_paused">@color/mobilerun_warning</color>
+    <color name="task_status_tracking_timeout">@color/mobilerun_muted_foreground</color>
+    <color name="task_status_unknown">@color/mobilerun_muted_foreground</color>
+    <color name="task_status_ring_empty">@color/mobilerun_border</color>
 </resources>

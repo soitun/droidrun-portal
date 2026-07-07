@@ -25,7 +25,6 @@ import android.view.View
 import android.os.Handler
 import android.os.Looper
 import android.net.Uri
-import android.graphics.Color
 import org.json.JSONObject
 import androidx.appcompat.app.AlertDialog
 import android.content.ClipboardManager
@@ -2345,7 +2344,7 @@ class MainActivity : AppCompatActivity(), ConfigManager.ConfigChangeListener {
             val textView = TextView(this).apply {
                 text = responseText.ifEmpty { "No logs available. Fetch data first." }
                 textSize = 12f
-                setTextColor(Color.WHITE)
+                setTextColor(ContextCompat.getColor(context, R.color.mobilerun_foreground))
                 setPadding(40, 40, 40, 40)
                 setTextIsSelectable(true)
             }
