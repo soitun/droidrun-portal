@@ -25,7 +25,6 @@ import android.view.View
 import android.os.Handler
 import android.os.Looper
 import android.net.Uri
-import android.graphics.Color
 import org.json.JSONObject
 import androidx.appcompat.app.AlertDialog
 import android.content.ClipboardManager
@@ -54,7 +53,6 @@ import com.mobilerun.portal.ui.taskprompt.TaskPromptCardController
 import com.mobilerun.portal.ui.taskprompt.TaskDetailsActivity
 import com.mobilerun.portal.ui.taskprompt.TaskHistoryActivity
 import com.mobilerun.portal.ui.settings.SettingsActivity
-import androidx.core.graphics.toColorInt
 import androidx.core.content.ContextCompat
 
 import android.content.BroadcastReceiver
@@ -1224,7 +1222,7 @@ class MainActivity : AppCompatActivity(), ConfigManager.ConfigChangeListener {
     private fun showInstallSnackbar(message: String, success: Boolean) {
         val snackbar = Snackbar.make(binding.root, message, Snackbar.LENGTH_LONG)
         if (!success) {
-            snackbar.setBackgroundTint("#D32F2F".toColorInt())
+            snackbar.setBackgroundTint(ContextCompat.getColor(this, R.color.mobilerun_destructive))
         }
         val textView = snackbar.view.findViewById<TextView>(
             com.google.android.material.R.id.snackbar_text
@@ -2287,7 +2285,7 @@ class MainActivity : AppCompatActivity(), ConfigManager.ConfigChangeListener {
             if (accessibilityService != null) {
                 val status = accessibilityService.getSocketServerStatus()
                 binding.socketServerStatus.text = status
-                binding.socketServerStatus.setTextColor("#00FFA6".toColorInt())
+                binding.socketServerStatus.setTextColor(ContextCompat.getColor(this, R.color.mobilerun_success))
             } else {
                 binding.socketServerStatus.text = "Service not available"
             }
@@ -2346,7 +2344,7 @@ class MainActivity : AppCompatActivity(), ConfigManager.ConfigChangeListener {
             val textView = TextView(this).apply {
                 text = responseText.ifEmpty { "No logs available. Fetch data first." }
                 textSize = 12f
-                setTextColor(Color.WHITE)
+                setTextColor(ContextCompat.getColor(context, R.color.mobilerun_foreground))
                 setPadding(40, 40, 40, 40)
                 setTextIsSelectable(true)
             }

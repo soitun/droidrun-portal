@@ -280,11 +280,11 @@
                     android:orientation="horizontal">
 
                     <ImageView
-                        android:layout_width="28dp"
-                        android:layout_height="28dp"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
                         android:layout_gravity="center_vertical"
                         android:scaleType="fitCenter"
-                        android:src="@drawable/mobilerun_logo_square_white" />
+                        android:src="@drawable/mobilerun_logo_square" />
 
                     <TextView
                         android:layout_width="0dp"

@@ -1,29 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme. -->
-    <style name="Theme.Mobilerun" parent="Theme.MaterialComponents.NoActionBar">
-        <!-- Primary brand color. -->
-        <item name="colorPrimary">@color/mobilerun_primary_light</item>
-        <item name="colorPrimaryVariant">@color/mobilerun_primary</item>
-        <item name="colorOnPrimary">@color/black</item>
-        <!-- Secondary brand color. -->
-        <item name="colorSecondary">@color/mobilerun_accent</item>
-        <item name="colorSecondaryVariant">@color/mobilerun_secondary</item>
-        <item name="colorOnSecondary">@color/black</item>
-        <!-- Status bar color. -->
-        <item name="android:statusBarColor">@color/black</item>
-        <!-- Background colors -->
-        <item name="android:colorBackground">#1A1E1C</item>
-        <item name="colorSurface">#252A27</item>
-        <item name="colorOnSurface">@color/white</item>
-        <!-- Text colors -->
-        <item name="android:textColorPrimary">@color/white</item>
-        <item name="android:textColorSecondary">#A6E9CE</item>
-        <item name="android:textColorHint">#78CAB0</item>
-        <!-- Ripple effect -->
-        <item name="colorControlHighlight">#3300E5B9</item>
-        <!-- Enable window content transitions -->
-        <item name="android:windowActivityTransitions">true</item>
-        <item name="android:windowEnterTransition">@android:transition/fade</item>
-        <item name="android:windowExitTransition">@android:transition/fade</item>
+
+    <!--
+        Night-mode definition of Theme.Mobilerun.
+        Extends Base.Theme.Mobilerun (defined in values/themes.xml - Android resolves
+        the parent reference against the merged resource table, so this works fine).
+        Inherits every shared attr (colors via @color/* DayNight resolution, fonts,
+        shapes, component styles, transitions) and adds only the two per-mode bits.
+    -->
+    <style name="Theme.Mobilerun" parent="Base.Theme.Mobilerun">
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="fontFamilyMono">@font/anonymous_pro</item>
     </style>
 </resources>
