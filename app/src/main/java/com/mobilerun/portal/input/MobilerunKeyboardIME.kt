@@ -10,12 +10,12 @@ import android.inputmethodservice.InputMethodService
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Base64
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
-import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.Toast
@@ -24,6 +24,15 @@ import java.util.concurrent.TimeUnit
 
 class MobilerunKeyboardIME : InputMethodService() {
     private val TAG = "MobilerunKeyboardIME"
+    @Volatile
+    private var inputGeneration = 0L
+    private val textEditor by lazy {
+        InputConnectionTextEditor(
+            connectionProvider = { currentInputConnection },
+            generationProvider = { inputGeneration },
+            sleep = SystemClock::sleep,
+        )
+    }
 
     companion object {
         private var instance: MobilerunKeyboardIME? = null
@@ -59,33 +68,38 @@ class MobilerunKeyboardIME : InputMethodService() {
      * Direct method to input text from Base64 without using broadcasts
      */
     fun inputB64Text(base64Text: String, clear: Boolean = true): Boolean {
+        return inputB64TextResult(base64Text, clear) == TextInputResult.Verified
+    }
+
+    internal fun inputB64TextResult(base64Text: String, clear: Boolean = true): TextInputResult {
         return try {
             val decoded = Base64.decode(base64Text, Base64.DEFAULT)
             val text = String(decoded, Charsets.UTF_8)
-            inputText(text, clear)
+            inputTextResult(text, clear)
         } catch (e: Exception) {
             Log.e(TAG, "Error decoding base64 for direct input", e)
-            false
+            TextInputResult.Rejected
         }
     }
     
     fun inputText(text: String, clear: Boolean = true): Boolean {
+        return inputTextResult(text, clear) == TextInputResult.Verified
+    }
+
+    internal fun inputTextResult(text: String, clear: Boolean = true): TextInputResult {
         return try {
-            val ic = currentInputConnection
-            if (ic != null) {
-                if (clear) {
-                    clearText()
+            val result = textEditor.inputText(text, clear)
+            when (result) {
+                TextInputResult.Verified -> Log.d(TAG, "Text input verified (clear=$clear)")
+                TextInputResult.Rejected -> Log.w(TAG, "Text input rejected (clear=$clear)")
+                TextInputResult.AcceptedUnverified -> {
+                    Log.w(TAG, "Text input accepted but could not be verified (clear=$clear)")
                 }
-                ic.commitText(text, 1)
-                Log.d(TAG, "Text input successful: $text (clear=$clear)")
-                true
-            } else {
-                Log.w(TAG, "No input connection available for text input")
-                false
             }
+            result
         } catch (e: Exception) {
             Log.e(TAG, "Error in text input", e)
-            false
+            TextInputResult.Rejected
         }
     }
     
@@ -94,29 +108,7 @@ class MobilerunKeyboardIME : InputMethodService() {
      * Direct method to clear text without using broadcasts
      */
     fun clearText(): Boolean {
-        return try {
-            val ic = currentInputConnection
-            if (ic != null) {
-                val extractedText = ic.getExtractedText(ExtractedTextRequest(), 0)
-                if (extractedText != null) {
-                    val curPos = extractedText.text
-                    val beforePos = ic.getTextBeforeCursor(curPos.length, 0)
-                    val afterPos = ic.getTextAfterCursor(curPos.length, 0)
-                    ic.deleteSurroundingText(beforePos?.length ?: 0, afterPos?.length ?: 0)
-                    Log.d(TAG, "Direct text clear successful")
-                    true
-                } else {
-                    Log.w(TAG, "No extracted text available for clearing")
-                    false
-                }
-            } else {
-                Log.w(TAG, "No input connection available for direct clear")
-                false
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in direct text clear", e)
-            false
-        }
+        return inputTextResult("", clear = true) == TextInputResult.Verified
     }
 
     /**
@@ -126,10 +118,15 @@ class MobilerunKeyboardIME : InputMethodService() {
         return try {
             val ic = currentInputConnection
             if (ic != null) {
-                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
-                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
-                Log.d(TAG, "Direct key event sent: $keyCode")
-                true
+                val downAccepted = ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+                val upAccepted = ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
+                val accepted = downAccepted && upAccepted
+                if (accepted) {
+                    Log.d(TAG, "Direct key event sent: $keyCode")
+                } else {
+                    Log.w(TAG, "Direct key event rejected: $keyCode")
+                }
+                accepted
             } else {
                 Log.w(TAG, "No input connection available for direct key event")
                 false
@@ -220,6 +217,7 @@ class MobilerunKeyboardIME : InputMethodService() {
 
     override fun onStartInput(attribute: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
+        inputGeneration++
         Log.d(TAG, "onStartInput called - restarting: $restarting")
     }
 
