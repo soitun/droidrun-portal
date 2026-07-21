@@ -221,10 +221,8 @@ class MobilerunKeyboardIME : InputMethodService() {
     }
 
     override fun onStartInput(attribute: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
+        inputGeneration++
         super.onStartInput(attribute, restarting)
-        if (!restarting) {
-            inputGeneration++
-        }
         Log.d(TAG, "onStartInput called - restarting: $restarting")
     }
 
