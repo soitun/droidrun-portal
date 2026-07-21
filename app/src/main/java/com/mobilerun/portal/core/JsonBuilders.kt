@@ -63,8 +63,6 @@ object JsonBuilders {
                 put("text", state.focusedElement?.text)
                 put("className", state.focusedElement?.className)
                 put("resourceId", state.focusedElement?.viewIdResourceName ?: "")
-                put("isPassword", state.focusedElement?.isPassword ?: false)
-                put("isShowingHintText", state.focusedElement?.isShowingHintText ?: false)
             })
         }
     }

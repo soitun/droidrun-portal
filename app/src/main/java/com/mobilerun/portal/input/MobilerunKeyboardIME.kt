@@ -118,15 +118,10 @@ class MobilerunKeyboardIME : InputMethodService() {
         return try {
             val ic = currentInputConnection
             if (ic != null) {
-                val downAccepted = ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
-                val upAccepted = ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
-                val accepted = downAccepted && upAccepted
-                if (accepted) {
-                    Log.d(TAG, "Direct key event sent: $keyCode")
-                } else {
-                    Log.w(TAG, "Direct key event rejected: $keyCode")
-                }
-                accepted
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
+                Log.d(TAG, "Direct key event sent: $keyCode")
+                true
             } else {
                 Log.w(TAG, "No input connection available for direct key event")
                 false

@@ -25,22 +25,29 @@ internal class InputConnectionTextEditor(
     private data class Snapshot(
         val text: String,
         val startOffset: Int,
+        val partialStartOffset: Int,
         val selectionStart: Int,
         val selectionEnd: Int,
-    )
+    ) {
+        val isCompleteReport: Boolean
+            get() = partialStartOffset == -1
+
+        val coversEntireField: Boolean
+            get() = startOffset == 0 && isCompleteReport
+    }
 
     fun inputText(text: String, clear: Boolean): TextInputResult {
-        var acceptedWithoutVerification = false
+        var clearAcceptedWithoutVerification = false
 
         repeat(MAX_ATTEMPTS) { attempt ->
             val connection = connectionProvider()
             val before = connection?.let(::readSnapshot)
-            if (connection == null || before == null) {
+            if (connection == null || before == null || (clear && !before.coversEntireField)) {
                 if (attempt < MAX_ATTEMPTS - 1) {
                     sleep(retryDelayMs)
                     return@repeat
                 }
-                return if (acceptedWithoutVerification) {
+                return if (clearAcceptedWithoutVerification) {
                     TextInputResult.AcceptedUnverified
                 } else {
                     TextInputResult.Rejected
@@ -49,6 +56,7 @@ internal class InputConnectionTextEditor(
 
             val generation = generationProvider()
             val selection = selectionFor(before, clear)
+            val expected = expectedText(before, text, clear)
             if (!connection.setSelection(selection.first, selection.second)) {
                 if (attempt < MAX_ATTEMPTS - 1) {
                     sleep(retryDelayMs)
@@ -64,30 +72,37 @@ internal class InputConnectionTextEditor(
                 }
                 return TextInputResult.Rejected
             }
-            acceptedWithoutVerification = true
+            if (clear) {
+                clearAcceptedWithoutVerification = true
+            }
 
             sleep(retryDelayMs)
             val afterConnection = connectionProvider()
             val after = afterConnection?.let(::readSnapshot)
-            if (after == null) {
-                if (clear && attempt < MAX_ATTEMPTS - 1) {
-                    return@repeat
-                }
-                return TextInputResult.AcceptedUnverified
-            }
-
-            if (matches(after.text, text, clear)) {
+            val sameInputSession =
+                generationProvider() == generation && afterConnection === connection
+            if (after != null &&
+                canVerify(before, after, clear, sameInputSession) &&
+                matches(after.text, expected)
+            ) {
                 return TextInputResult.Verified
             }
 
-            val restarted = generationProvider() != generation || afterConnection !== connection
-            if (attempt < MAX_ATTEMPTS - 1 && (clear || restarted || !contains(after.text, text))) {
+            if (!clear) {
+                return TextInputResult.AcceptedUnverified
+            }
+
+            if (attempt < MAX_ATTEMPTS - 1) {
                 return@repeat
             }
-            return TextInputResult.Rejected
+            return if (after == null || !after.coversEntireField) {
+                TextInputResult.AcceptedUnverified
+            } else {
+                TextInputResult.Rejected
+            }
         }
 
-        return if (acceptedWithoutVerification) {
+        return if (clearAcceptedWithoutVerification) {
             TextInputResult.AcceptedUnverified
         } else {
             TextInputResult.Rejected
@@ -105,6 +120,7 @@ internal class InputConnectionTextEditor(
         return Snapshot(
             text = value,
             startOffset = extracted.startOffset,
+            partialStartOffset = extracted.partialStartOffset,
             selectionStart = relativeStart,
             selectionEnd = relativeEnd,
         )
@@ -116,18 +132,29 @@ internal class InputConnectionTextEditor(
         return Pair(snapshot.startOffset + relativeStart, snapshot.startOffset + relativeEnd)
     }
 
-    private fun matches(actual: String, expected: String, clear: Boolean): Boolean {
-        val normalizedActual = normalize(actual)
-        val normalizedExpected = normalize(expected)
-        return if (clear) {
-            normalizedActual == normalizedExpected
-        } else {
-            normalizedActual.contains(normalizedExpected)
-        }
+    private fun expectedText(snapshot: Snapshot, text: String, clear: Boolean): String {
+        if (clear) return text
+
+        val selectionStart = minOf(snapshot.selectionStart, snapshot.selectionEnd)
+        val selectionEnd = maxOf(snapshot.selectionStart, snapshot.selectionEnd)
+        return snapshot.text.replaceRange(selectionStart, selectionEnd, text)
     }
 
-    private fun contains(actual: String, expected: String): Boolean {
-        return normalize(actual).contains(normalize(expected))
+    private fun canVerify(
+        before: Snapshot,
+        after: Snapshot,
+        clear: Boolean,
+        sameInputSession: Boolean,
+    ): Boolean {
+        if (clear) return after.coversEntireField
+        return sameInputSession &&
+            before.isCompleteReport &&
+            after.isCompleteReport &&
+            before.startOffset == after.startOffset
+    }
+
+    private fun matches(actual: String, expected: String): Boolean {
+        return normalize(actual) == normalize(expected)
     }
 
     private fun normalize(value: String): String {
