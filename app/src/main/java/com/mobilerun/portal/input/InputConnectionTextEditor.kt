@@ -93,6 +93,19 @@ internal class InputConnectionTextEditor(
             if (!isSameInputSession(inputSessionGeneration)) {
                 return TextInputResult.InputSessionChanged
             }
+            if (!connection.finishComposingText()) {
+                if (!isSameInputSession(inputSessionGeneration)) {
+                    return TextInputResult.InputSessionChanged
+                }
+                if (attempt < MAX_ATTEMPTS - 1) {
+                    sleep(retryDelayMs)
+                    return@repeat
+                }
+                return resultAfterRejectedOperation(clearAcceptedWithoutVerification)
+            }
+            if (!isSameInputSession(inputSessionGeneration)) {
+                return TextInputResult.InputSessionChanged
+            }
             val selection = selectionFor(before, clear)
             val expected = expectedText(before, text, clear)
             if (!connection.setSelection(selection.first, selection.second)) {
@@ -103,7 +116,7 @@ internal class InputConnectionTextEditor(
                     sleep(retryDelayMs)
                     return@repeat
                 }
-                return TextInputResult.Rejected
+                return resultAfterRejectedOperation(clearAcceptedWithoutVerification)
             }
 
             if (!isSameInputSession(inputSessionGeneration)) {
@@ -117,7 +130,7 @@ internal class InputConnectionTextEditor(
                     sleep(retryDelayMs)
                     return@repeat
                 }
-                return TextInputResult.Rejected
+                return resultAfterRejectedOperation(clearAcceptedWithoutVerification)
             }
             if (clear) {
                 clearAcceptedWithoutVerification = true
@@ -162,6 +175,14 @@ internal class InputConnectionTextEditor(
 
     private fun isSameInputSession(generation: Long): Boolean {
         return generationProvider() == generation
+    }
+
+    private fun resultAfterRejectedOperation(clearAccepted: Boolean): TextInputResult {
+        return if (clearAccepted) {
+            TextInputResult.AcceptedUnverified
+        } else {
+            TextInputResult.Rejected
+        }
     }
 
     private fun readSnapshot(connection: InputConnection): Snapshot? {
