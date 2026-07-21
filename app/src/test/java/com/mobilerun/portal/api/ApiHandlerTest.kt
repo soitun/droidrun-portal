@@ -214,22 +214,21 @@ class ApiHandlerTest {
     }
 
     @Test
-    fun keyboardInput_fallsBackAfterAcceptedUnverifiedImeReplacement() {
+    fun keyboardInput_doesNotFallbackAfterAcceptedUnverifiedImeReplacement() {
         val stateRepo = mockk<StateRepository>(relaxed = true)
         val ime = mockk<MobilerunKeyboardIME>()
         val handler = createHandler(stateRepo = stateRepo, ime = ime)
         every {
             ime.inputB64TextResult("encoded", true)
         } returns TextInputResult.AcceptedUnverified
-        mockkStatic(Base64::class)
-        every { Base64.decode("encoded", Base64.DEFAULT) } returns "hello".toByteArray()
-        every { stateRepo.inputText("hello", true) } returns true
 
         assertEquals(
-            ApiResponse.Success("input done via Accessibility (clear=true)"),
+            ApiResponse.Error(
+                "input accepted via IME but could not be verified; fallback skipped",
+            ),
             handler.keyboardInput("encoded", clear = true),
         )
-        verify(exactly = 1) { stateRepo.inputText("hello", true) }
+        verify(exactly = 0) { stateRepo.inputText(any(), any()) }
     }
 
     @Test
@@ -243,9 +242,25 @@ class ApiHandlerTest {
 
         assertEquals(
             ApiResponse.Error(
-                "input accepted via IME but could not be verified; append fallback skipped",
+                "input accepted via IME but could not be verified; fallback skipped",
             ),
             handler.keyboardInput("encoded", clear = false),
+        )
+        verify(exactly = 0) { stateRepo.inputText(any(), any()) }
+    }
+
+    @Test
+    fun keyboardInput_doesNotFallbackAfterInputSessionChanges() {
+        val stateRepo = mockk<StateRepository>(relaxed = true)
+        val ime = mockk<MobilerunKeyboardIME>()
+        val handler = createHandler(stateRepo = stateRepo, ime = ime)
+        every {
+            ime.inputB64TextResult("encoded", true)
+        } returns TextInputResult.InputSessionChanged
+
+        assertEquals(
+            ApiResponse.Error("input session changed during IME input; fallback skipped"),
+            handler.keyboardInput("encoded", clear = true),
         )
         verify(exactly = 0) { stateRepo.inputText(any(), any()) }
     }

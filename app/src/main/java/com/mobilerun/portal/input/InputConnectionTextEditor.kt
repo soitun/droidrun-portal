@@ -7,6 +7,7 @@ internal sealed class TextInputResult {
     data object Verified : TextInputResult()
     data object Rejected : TextInputResult()
     data object AcceptedUnverified : TextInputResult()
+    data object InputSessionChanged : TextInputResult()
 }
 
 internal class InputConnectionTextEditor(
@@ -37,12 +38,16 @@ internal class InputConnectionTextEditor(
     }
 
     fun inputText(text: String, clear: Boolean): TextInputResult {
+        val inputSessionGeneration = generationProvider()
         var clearAcceptedWithoutVerification = false
 
         repeat(MAX_ATTEMPTS) { attempt ->
+            if (!isSameInputSession(inputSessionGeneration)) {
+                return TextInputResult.InputSessionChanged
+            }
+
             val connection = connectionProvider()
-            val before = connection?.let(::readSnapshot)
-            if (connection == null || before == null || (clear && !before.coversEntireField)) {
+            if (connection == null) {
                 if (attempt < MAX_ATTEMPTS - 1) {
                     sleep(retryDelayMs)
                     return@repeat
@@ -54,10 +59,18 @@ internal class InputConnectionTextEditor(
                 }
             }
 
-            val generation = generationProvider()
-            val selection = selectionFor(before, clear)
-            val expected = expectedText(before, text, clear)
-            if (!connection.setSelection(selection.first, selection.second)) {
+            val before = readSnapshot(connection)
+            if (before == null && !clear) {
+                if (!isSameInputSession(inputSessionGeneration)) {
+                    return TextInputResult.InputSessionChanged
+                }
+                val accepted = connection.commitText(text, 1)
+                if (!isSameInputSession(inputSessionGeneration)) {
+                    return TextInputResult.InputSessionChanged
+                }
+                if (accepted) {
+                    return TextInputResult.AcceptedUnverified
+                }
                 if (attempt < MAX_ATTEMPTS - 1) {
                     sleep(retryDelayMs)
                     return@repeat
@@ -65,7 +78,41 @@ internal class InputConnectionTextEditor(
                 return TextInputResult.Rejected
             }
 
+            if (before == null || (clear && !before.coversEntireField)) {
+                if (attempt < MAX_ATTEMPTS - 1) {
+                    sleep(retryDelayMs)
+                    return@repeat
+                }
+                return if (clearAcceptedWithoutVerification) {
+                    TextInputResult.AcceptedUnverified
+                } else {
+                    TextInputResult.Rejected
+                }
+            }
+
+            if (!isSameInputSession(inputSessionGeneration)) {
+                return TextInputResult.InputSessionChanged
+            }
+            val selection = selectionFor(before, clear)
+            val expected = expectedText(before, text, clear)
+            if (!connection.setSelection(selection.first, selection.second)) {
+                if (!isSameInputSession(inputSessionGeneration)) {
+                    return TextInputResult.InputSessionChanged
+                }
+                if (attempt < MAX_ATTEMPTS - 1) {
+                    sleep(retryDelayMs)
+                    return@repeat
+                }
+                return TextInputResult.Rejected
+            }
+
+            if (!isSameInputSession(inputSessionGeneration)) {
+                return TextInputResult.InputSessionChanged
+            }
             if (!connection.commitText(text, 1)) {
+                if (!isSameInputSession(inputSessionGeneration)) {
+                    return TextInputResult.InputSessionChanged
+                }
                 if (attempt < MAX_ATTEMPTS - 1) {
                     sleep(retryDelayMs)
                     return@repeat
@@ -77,12 +124,16 @@ internal class InputConnectionTextEditor(
             }
 
             sleep(retryDelayMs)
+            if (!isSameInputSession(inputSessionGeneration)) {
+                return TextInputResult.InputSessionChanged
+            }
             val afterConnection = connectionProvider()
             val after = afterConnection?.let(::readSnapshot)
-            val sameInputSession =
-                generationProvider() == generation && afterConnection === connection
+            if (!isSameInputSession(inputSessionGeneration)) {
+                return TextInputResult.InputSessionChanged
+            }
             if (after != null &&
-                canVerify(before, after, clear, sameInputSession) &&
+                canVerify(before, after, clear) &&
                 matches(after.text, expected)
             ) {
                 return TextInputResult.Verified
@@ -107,6 +158,10 @@ internal class InputConnectionTextEditor(
         } else {
             TextInputResult.Rejected
         }
+    }
+
+    private fun isSameInputSession(generation: Long): Boolean {
+        return generationProvider() == generation
     }
 
     private fun readSnapshot(connection: InputConnection): Snapshot? {
@@ -144,11 +199,9 @@ internal class InputConnectionTextEditor(
         before: Snapshot,
         after: Snapshot,
         clear: Boolean,
-        sameInputSession: Boolean,
     ): Boolean {
         if (clear) return after.coversEntireField
-        return sameInputSession &&
-            before.isCompleteReport &&
+        return before.isCompleteReport &&
             after.isCompleteReport &&
             before.startOffset == after.startOffset
     }

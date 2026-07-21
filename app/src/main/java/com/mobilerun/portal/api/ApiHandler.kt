@@ -320,11 +320,14 @@ class ApiHandler(
                     return ApiResponse.Success("input done via IME (clear=$clear)")
                 }
                 TextInputResult.AcceptedUnverified -> {
-                    if (!clear) {
-                        return ApiResponse.Error(
-                            "input accepted via IME but could not be verified; append fallback skipped",
-                        )
-                    }
+                    return ApiResponse.Error(
+                        "input accepted via IME but could not be verified; fallback skipped",
+                    )
+                }
+                TextInputResult.InputSessionChanged -> {
+                    return ApiResponse.Error(
+                        "input session changed during IME input; fallback skipped",
+                    )
                 }
                 TextInputResult.Rejected -> Unit
             }

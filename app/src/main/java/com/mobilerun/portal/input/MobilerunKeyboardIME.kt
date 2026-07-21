@@ -95,6 +95,9 @@ class MobilerunKeyboardIME : InputMethodService() {
                 TextInputResult.AcceptedUnverified -> {
                     Log.w(TAG, "Text input accepted but could not be verified (clear=$clear)")
                 }
+                TextInputResult.InputSessionChanged -> {
+                    Log.w(TAG, "Input session changed during text input (clear=$clear)")
+                }
             }
             result
         } catch (e: Exception) {
@@ -212,8 +215,15 @@ class MobilerunKeyboardIME : InputMethodService() {
 
     override fun onStartInput(attribute: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
-        inputGeneration++
+        if (!restarting) {
+            inputGeneration++
+        }
         Log.d(TAG, "onStartInput called - restarting: $restarting")
+    }
+
+    override fun onFinishInput() {
+        inputGeneration++
+        super.onFinishInput()
     }
 
     override fun onStartInputView(attribute: android.view.inputmethod.EditorInfo?, restarting: Boolean) {

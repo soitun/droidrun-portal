@@ -124,6 +124,21 @@ class InputConnectionTextEditorTest {
     }
 
     @Test
+    fun appendWithoutReadableSnapshot_commitsOnceAtCurrentSelection() {
+        val connection = mockk<InputConnection>(relaxed = true)
+        every { connection.getExtractedText(any(), 0) } returns null
+        every { connection.commitText("hello", 1) } returns true
+        val editor = editor { connection }
+
+        assertEquals(
+            TextInputResult.AcceptedUnverified,
+            editor.inputText("hello", clear = false),
+        )
+        verify(exactly = 0) { connection.setSelection(any(), any()) }
+        verify(exactly = 1) { connection.commitText("hello", 1) }
+    }
+
+    @Test
     fun clear_reacquiresConnectionAndRetriesAfterImeRestart() {
         val stale = mockk<InputConnection>(relaxed = true)
         val fresh = mockk<InputConnection>(relaxed = true)
@@ -139,20 +154,35 @@ class InputConnectionTextEditorTest {
         every { fresh.commitText("new", 1) } returns true
 
         val connections = ArrayDeque(listOf(stale, fresh, fresh, fresh))
-        var generation = 1L
-        var sleeps = 0
         val editor = InputConnectionTextEditor(
             connectionProvider = { connections.removeFirstOrNull() },
-            generationProvider = { generation },
-            sleep = {
-                sleeps++
-                if (sleeps == 1) generation++
-            },
+            generationProvider = { 1L },
+            sleep = {},
         )
 
         assertEquals(TextInputResult.Verified, editor.inputText("new", clear = true))
         verify(exactly = 1) { stale.commitText("new", 1) }
         verify(exactly = 1) { fresh.commitText("new", 1) }
+    }
+
+    @Test
+    fun clear_doesNotRetryAfterInputSessionChanges() {
+        val connection = mockk<InputConnection>(relaxed = true)
+        every { connection.getExtractedText(any(), 0) } returns snapshot("old", selectionStart = 3)
+        every { connection.setSelection(0, 3) } returns true
+        every { connection.commitText("new", 1) } returns true
+        var generation = 1L
+        val editor = InputConnectionTextEditor(
+            connectionProvider = { connection },
+            generationProvider = { generation },
+            sleep = { generation++ },
+        )
+
+        assertEquals(
+            TextInputResult.InputSessionChanged,
+            editor.inputText("new", clear = true),
+        )
+        verify(exactly = 1) { connection.commitText("new", 1) }
     }
 
     @Test
