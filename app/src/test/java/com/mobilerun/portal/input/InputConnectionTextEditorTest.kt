@@ -17,6 +17,7 @@ class InputConnectionTextEditorTest {
             snapshot("old", selectionStart = 3),
             snapshot("new", selectionStart = 3),
         )
+        every { connection.getTextAfterCursor(any(), 0) } returns ""
         every { connection.finishComposingText() } returns true
         every { connection.setSelection(0, 3) } returns true
         every { connection.commitText("new", 1) } returns true
@@ -58,6 +59,21 @@ class InputConnectionTextEditorTest {
     }
 
     @Test
+    fun clear_rejectsSnapshotWithUnreportedSuffix() {
+        val connection = mockk<InputConnection>(relaxed = true)
+        every { connection.getExtractedText(any(), 0) } returns
+            snapshot("prefix", selectionStart = 6)
+        every { connection.getTextAfterCursor(1, 0) } returns "x"
+        every { connection.finishComposingText() } returns true
+        val editor = editor { connection }
+
+        assertEquals(TextInputResult.Rejected, editor.inputText("new", clear = true))
+
+        verify(exactly = 0) { connection.setSelection(any(), any()) }
+        verify(exactly = 0) { connection.commitText(any(), any()) }
+    }
+
+    @Test
     fun append_replacesSelectionAndIgnoresZeroWidthSentinels() {
         val connection = mockk<InputConnection>(relaxed = true)
         every { connection.getExtractedText(any(), 0) } returnsMany listOf(
@@ -80,6 +96,7 @@ class InputConnectionTextEditorTest {
     fun clear_doesNotVerifyDroppedRequestedZeroWidthCharacters() {
         val connection = mockk<InputConnection>(relaxed = true)
         every { connection.getExtractedText(any(), 0) } returns snapshot("", selectionStart = 0)
+        every { connection.getTextAfterCursor(any(), 0) } returns ""
         every { connection.finishComposingText() } returns true
         every { connection.setSelection(0, 0) } returns true
         every { connection.commitText("\u200B\uFEFF", 1) } returns true
@@ -99,6 +116,7 @@ class InputConnectionTextEditorTest {
             snapshot("", selectionStart = 0),
             snapshot("\u200B\uFEFF", selectionStart = 2),
         )
+        every { connection.getTextAfterCursor(any(), 0) } returns ""
         every { connection.finishComposingText() } returns true
         every { connection.setSelection(0, 0) } returns true
         every { connection.commitText("\u200B\uFEFF", 1) } returns true
@@ -200,6 +218,7 @@ class InputConnectionTextEditorTest {
                 throw IllegalStateException("connection closed")
             }
         }
+        every { connection.getTextAfterCursor(any(), 0) } returns ""
         every { connection.finishComposingText() } returns true
         every { connection.setSelection(0, 3) } returns true
         every { connection.commitText("new", 1) } returns true
@@ -266,6 +285,7 @@ class InputConnectionTextEditorTest {
             snapshot("x", selectionStart = 1),
             snapshot("x", selectionStart = 1),
         )
+        every { connection.getTextAfterCursor(any(), 0) } returns ""
         every { connection.finishComposingText() } returns true
         every { connection.setSelection(0, 1) } returns true
         every { connection.commitText("long", 1) } returns true
@@ -283,6 +303,7 @@ class InputConnectionTextEditorTest {
         val stale = mockk<InputConnection>(relaxed = true)
         val fresh = mockk<InputConnection>(relaxed = true)
         every { stale.getExtractedText(any(), 0) } returns snapshot("old", selectionStart = 3)
+        every { stale.getTextAfterCursor(any(), 0) } returns ""
         every { stale.finishComposingText() } returns true
         every { stale.setSelection(0, 3) } returns true
         every { stale.commitText("new", 1) } returns false
@@ -290,6 +311,7 @@ class InputConnectionTextEditorTest {
             snapshot("old", selectionStart = 3),
             snapshot("\uFEFFnew", selectionStart = 4),
         )
+        every { fresh.getTextAfterCursor(any(), 0) } returns ""
         every { fresh.finishComposingText() } returns true
         every { fresh.setSelection(0, 3) } returns true
         every { fresh.commitText("new", 1) } returns true
@@ -310,6 +332,7 @@ class InputConnectionTextEditorTest {
     fun clear_doesNotRetryAfterInputSessionChanges() {
         val connection = mockk<InputConnection>(relaxed = true)
         every { connection.getExtractedText(any(), 0) } returns snapshot("old", selectionStart = 3)
+        every { connection.getTextAfterCursor(any(), 0) } returns ""
         every { connection.finishComposingText() } returns true
         every { connection.setSelection(0, 3) } returns true
         every { connection.commitText("new", 1) } returns true
@@ -331,6 +354,7 @@ class InputConnectionTextEditorTest {
     fun rejectedOperationsRetryOnceThenFail() {
         val connection = mockk<InputConnection>(relaxed = true)
         every { connection.getExtractedText(any(), 0) } returns snapshot("old", selectionStart = 3)
+        every { connection.getTextAfterCursor(any(), 0) } returns ""
         every { connection.finishComposingText() } returns true
         every { connection.setSelection(0, 3) } returns true
         every { connection.commitText("new", 1) } returns false
@@ -347,6 +371,7 @@ class InputConnectionTextEditorTest {
             snapshot("old", selectionStart = 3),
             snapshot("new", selectionStart = 3),
         )
+        every { connection.getTextAfterCursor(any(), 0) } returns ""
         every { connection.finishComposingText() } returns true
         every { connection.setSelection(0, 3) } returns true
         every { connection.commitText("new", 1) } returns true

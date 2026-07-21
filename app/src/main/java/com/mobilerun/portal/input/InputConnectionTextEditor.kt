@@ -30,12 +30,13 @@ internal class InputConnectionTextEditor(
         val partialStartOffset: Int,
         val selectionStart: Int,
         val selectionEnd: Int,
+        val reachesFieldEnd: Boolean,
     ) {
         val isCompleteReport: Boolean
             get() = partialStartOffset == -1
 
         val coversEntireField: Boolean
-            get() = startOffset == 0 && isCompleteReport
+            get() = startOffset == 0 && isCompleteReport && reachesFieldEnd
     }
 
     fun inputText(text: String, clear: Boolean): TextInputResult {
@@ -89,7 +90,7 @@ internal class InputConnectionTextEditor(
                 return TextInputResult.InputSessionChanged
             }
 
-            val before = readSnapshot(connection)
+            val before = readSnapshot(connection, requireFieldEnd = clear)
             if (before == null && !clear) {
                 when (val result = commitWithoutVerification(connection, text, inputSessionGeneration)) {
                     TextInputResult.Rejected -> {
@@ -157,7 +158,9 @@ internal class InputConnectionTextEditor(
                 return TextInputResult.InputSessionChanged
             }
             val afterConnection = connectionOrNull()
-            val after = afterConnection?.let(::readSnapshot)
+            val after = afterConnection?.let {
+                readSnapshot(it, requireFieldEnd = clear)
+            }
             if (!isSameInputSession(inputSessionGeneration)) {
                 return TextInputResult.InputSessionChanged
             }
@@ -209,7 +212,10 @@ internal class InputConnectionTextEditor(
         }
     }
 
-    private fun readSnapshot(connection: InputConnection): Snapshot? {
+    private fun readSnapshot(
+        connection: InputConnection,
+        requireFieldEnd: Boolean = false,
+    ): Snapshot? {
         return try {
             val extracted = connection.getExtractedText(ExtractedTextRequest(), 0) ?: return null
             val value = extracted.text?.toString() ?: ""
@@ -218,16 +224,34 @@ internal class InputConnectionTextEditor(
             if (relativeStart < 0 || relativeEnd < 0 || relativeStart > value.length || relativeEnd > value.length) {
                 return null
             }
+            val structurallyComplete = extracted.startOffset == 0 && extracted.partialStartOffset == -1
+            val fieldEndConfirmed = !requireFieldEnd ||
+                (structurallyComplete && reachesFieldEnd(connection, value, relativeStart, relativeEnd))
             Snapshot(
                 text = value,
                 startOffset = extracted.startOffset,
                 partialStartOffset = extracted.partialStartOffset,
                 selectionStart = relativeStart,
                 selectionEnd = relativeEnd,
+                reachesFieldEnd = fieldEndConfirmed,
             )
         } catch (_: Exception) {
             return null
         }
+    }
+
+    private fun reachesFieldEnd(
+        connection: InputConnection,
+        text: String,
+        selectionStart: Int,
+        selectionEnd: Int,
+    ): Boolean {
+        val cursor = maxOf(selectionStart, selectionEnd)
+        val representedSuffix = text.substring(cursor)
+        val actualSuffix = connection.getTextAfterCursor(representedSuffix.length + 1, 0)
+            ?.toString()
+            ?: return false
+        return actualSuffix == representedSuffix
     }
 
     private fun selectionFor(snapshot: Snapshot, clear: Boolean): Pair<Int, Int> {
