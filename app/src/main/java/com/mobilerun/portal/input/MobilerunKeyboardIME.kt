@@ -111,7 +111,11 @@ class MobilerunKeyboardIME : InputMethodService() {
      * Direct method to clear text without using broadcasts
      */
     fun clearText(): Boolean {
-        return inputTextResult("", clear = true) == TextInputResult.Verified
+        return clearTextResult() == TextInputResult.Verified
+    }
+
+    internal fun clearTextResult(): TextInputResult {
+        return inputTextResult("", clear = true)
     }
 
     /**

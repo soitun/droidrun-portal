@@ -352,10 +352,22 @@ class ApiHandler(
         val ime = getKeyboardIME()
 
         if (ime != null && ime.hasInputConnection()) {
-            if (ime.clearText()) {
-                return ApiResponse.Success("Text cleared via IME")
+            when (ime.clearTextResult()) {
+                TextInputResult.Verified -> {
+                    return ApiResponse.Success("Text cleared via IME")
+                }
+                TextInputResult.AcceptedUnverified -> {
+                    return ApiResponse.Error(
+                        "clear accepted via IME but could not be verified; fallback skipped",
+                    )
+                }
+                TextInputResult.InputSessionChanged -> {
+                    return ApiResponse.Error(
+                        "input session changed during IME clear; fallback skipped",
+                    )
+                }
+                TextInputResult.Rejected -> Unit
             }
-            Log.w(TAG, "IME clearText() failed, falling back to Accessibility")
         }
 
         return if (stateRepo.inputText("", clear = true)) {

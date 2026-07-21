@@ -134,7 +134,7 @@ internal class InputConnectionTextEditor(
             }
             if (after != null &&
                 canVerify(before, after, clear) &&
-                matches(after.text, expected)
+                matches(after.text, expected, text)
             ) {
                 return TextInputResult.Verified
             }
@@ -206,11 +206,18 @@ internal class InputConnectionTextEditor(
             before.startOffset == after.startOffset
     }
 
-    private fun matches(actual: String, expected: String): Boolean {
+    private fun matches(actual: String, expected: String, requested: String): Boolean {
+        if (requested.any(::isIgnoredSentinel)) {
+            return actual == expected
+        }
         return normalize(actual) == normalize(expected)
     }
 
     private fun normalize(value: String): String {
-        return value.filterNot { it == ZERO_WIDTH_SPACE || it == ZERO_WIDTH_NO_BREAK_SPACE }
+        return value.filterNot(::isIgnoredSentinel)
+    }
+
+    private fun isIgnoredSentinel(value: Char): Boolean {
+        return value == ZERO_WIDTH_SPACE || value == ZERO_WIDTH_NO_BREAK_SPACE
     }
 }

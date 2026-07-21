@@ -72,6 +72,39 @@ class InputConnectionTextEditorTest {
     }
 
     @Test
+    fun clear_doesNotVerifyDroppedRequestedZeroWidthCharacters() {
+        val connection = mockk<InputConnection>(relaxed = true)
+        every { connection.getExtractedText(any(), 0) } returns snapshot("", selectionStart = 0)
+        every { connection.setSelection(0, 0) } returns true
+        every { connection.commitText("\u200B\uFEFF", 1) } returns true
+        val editor = editor { connection }
+
+        assertEquals(
+            TextInputResult.Rejected,
+            editor.inputText("\u200B\uFEFF", clear = true),
+        )
+        verify(exactly = 2) { connection.commitText("\u200B\uFEFF", 1) }
+    }
+
+    @Test
+    fun clear_verifiesRequestedZeroWidthCharactersWhenPresent() {
+        val connection = mockk<InputConnection>(relaxed = true)
+        every { connection.getExtractedText(any(), 0) } returnsMany listOf(
+            snapshot("", selectionStart = 0),
+            snapshot("\u200B\uFEFF", selectionStart = 2),
+        )
+        every { connection.setSelection(0, 0) } returns true
+        every { connection.commitText("\u200B\uFEFF", 1) } returns true
+        val editor = editor { connection }
+
+        assertEquals(
+            TextInputResult.Verified,
+            editor.inputText("\u200B\uFEFF", clear = true),
+        )
+        verify(exactly = 1) { connection.commitText("\u200B\uFEFF", 1) }
+    }
+
+    @Test
     fun acceptedAppendWithStalePostState_isNotRetried() {
         val connection = mockk<InputConnection>(relaxed = true)
         every { connection.getExtractedText(any(), 0) } returnsMany listOf(
