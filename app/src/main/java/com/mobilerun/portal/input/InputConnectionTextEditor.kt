@@ -39,37 +39,87 @@ internal class InputConnectionTextEditor(
 
     fun inputText(text: String, clear: Boolean): TextInputResult {
         val inputSessionGeneration = generationProvider()
-        var clearAcceptedWithoutVerification = false
 
         repeat(MAX_ATTEMPTS) { attempt ->
             if (!isSameInputSession(inputSessionGeneration)) {
                 return TextInputResult.InputSessionChanged
             }
 
-            val connection = connectionProvider()
+            val connection = connectionOrNull()
             if (connection == null) {
                 if (attempt < MAX_ATTEMPTS - 1) {
                     sleep(retryDelayMs)
                     return@repeat
                 }
-                return if (clearAcceptedWithoutVerification) {
-                    TextInputResult.AcceptedUnverified
-                } else {
-                    TextInputResult.Rejected
+                return TextInputResult.Rejected
+            }
+
+            if (!isSameInputSession(inputSessionGeneration)) {
+                return TextInputResult.InputSessionChanged
+            }
+            val compositionFinished = try {
+                connection.finishComposingText()
+            } catch (_: Exception) {
+                false
+            }
+            if (!compositionFinished) {
+                if (!clear) {
+                    when (val result = commitWithoutVerification(connection, text, inputSessionGeneration)) {
+                        TextInputResult.Rejected -> {
+                            if (attempt < MAX_ATTEMPTS - 1) {
+                                sleep(retryDelayMs)
+                                return@repeat
+                            }
+                            return TextInputResult.Rejected
+                        }
+                        else -> return result
+                    }
                 }
+                if (!isSameInputSession(inputSessionGeneration)) {
+                    return TextInputResult.InputSessionChanged
+                }
+                if (attempt < MAX_ATTEMPTS - 1) {
+                    sleep(retryDelayMs)
+                    return@repeat
+                }
+                return TextInputResult.Rejected
+            }
+            if (!isSameInputSession(inputSessionGeneration)) {
+                return TextInputResult.InputSessionChanged
             }
 
             val before = readSnapshot(connection)
             if (before == null && !clear) {
+                when (val result = commitWithoutVerification(connection, text, inputSessionGeneration)) {
+                    TextInputResult.Rejected -> {
+                        if (attempt < MAX_ATTEMPTS - 1) {
+                            sleep(retryDelayMs)
+                            return@repeat
+                        }
+                        return TextInputResult.Rejected
+                    }
+                    else -> return result
+                }
+            }
+
+            if (before == null || (clear && !before.coversEntireField)) {
+                if (attempt < MAX_ATTEMPTS - 1) {
+                    sleep(retryDelayMs)
+                    return@repeat
+                }
+                return TextInputResult.Rejected
+            }
+
+            val selection = selectionFor(before, clear)
+            val expected = expectedText(before, text, clear)
+            val selectionAccepted = try {
+                connection.setSelection(selection.first, selection.second)
+            } catch (_: Exception) {
+                false
+            }
+            if (!selectionAccepted) {
                 if (!isSameInputSession(inputSessionGeneration)) {
                     return TextInputResult.InputSessionChanged
-                }
-                val accepted = connection.commitText(text, 1)
-                if (!isSameInputSession(inputSessionGeneration)) {
-                    return TextInputResult.InputSessionChanged
-                }
-                if (accepted) {
-                    return TextInputResult.AcceptedUnverified
                 }
                 if (attempt < MAX_ATTEMPTS - 1) {
                     sleep(retryDelayMs)
@@ -78,22 +128,19 @@ internal class InputConnectionTextEditor(
                 return TextInputResult.Rejected
             }
 
-            if (before == null || (clear && !before.coversEntireField)) {
-                if (attempt < MAX_ATTEMPTS - 1) {
-                    sleep(retryDelayMs)
-                    return@repeat
-                }
-                return if (clearAcceptedWithoutVerification) {
+            if (!isSameInputSession(inputSessionGeneration)) {
+                return TextInputResult.InputSessionChanged
+            }
+            val commitAccepted = try {
+                connection.commitText(text, 1)
+            } catch (_: Exception) {
+                return if (isSameInputSession(inputSessionGeneration)) {
                     TextInputResult.AcceptedUnverified
                 } else {
-                    TextInputResult.Rejected
+                    TextInputResult.InputSessionChanged
                 }
             }
-
-            if (!isSameInputSession(inputSessionGeneration)) {
-                return TextInputResult.InputSessionChanged
-            }
-            if (!connection.finishComposingText()) {
+            if (!commitAccepted) {
                 if (!isSameInputSession(inputSessionGeneration)) {
                     return TextInputResult.InputSessionChanged
                 }
@@ -101,46 +148,14 @@ internal class InputConnectionTextEditor(
                     sleep(retryDelayMs)
                     return@repeat
                 }
-                return resultAfterRejectedOperation(clearAcceptedWithoutVerification)
-            }
-            if (!isSameInputSession(inputSessionGeneration)) {
-                return TextInputResult.InputSessionChanged
-            }
-            val selection = selectionFor(before, clear)
-            val expected = expectedText(before, text, clear)
-            if (!connection.setSelection(selection.first, selection.second)) {
-                if (!isSameInputSession(inputSessionGeneration)) {
-                    return TextInputResult.InputSessionChanged
-                }
-                if (attempt < MAX_ATTEMPTS - 1) {
-                    sleep(retryDelayMs)
-                    return@repeat
-                }
-                return resultAfterRejectedOperation(clearAcceptedWithoutVerification)
-            }
-
-            if (!isSameInputSession(inputSessionGeneration)) {
-                return TextInputResult.InputSessionChanged
-            }
-            if (!connection.commitText(text, 1)) {
-                if (!isSameInputSession(inputSessionGeneration)) {
-                    return TextInputResult.InputSessionChanged
-                }
-                if (attempt < MAX_ATTEMPTS - 1) {
-                    sleep(retryDelayMs)
-                    return@repeat
-                }
-                return resultAfterRejectedOperation(clearAcceptedWithoutVerification)
-            }
-            if (clear) {
-                clearAcceptedWithoutVerification = true
+                return TextInputResult.Rejected
             }
 
             sleep(retryDelayMs)
             if (!isSameInputSession(inputSessionGeneration)) {
                 return TextInputResult.InputSessionChanged
             }
-            val afterConnection = connectionProvider()
+            val afterConnection = connectionOrNull()
             val after = afterConnection?.let(::readSnapshot)
             if (!isSameInputSession(inputSessionGeneration)) {
                 return TextInputResult.InputSessionChanged
@@ -152,54 +167,66 @@ internal class InputConnectionTextEditor(
                 return TextInputResult.Verified
             }
 
-            if (!clear) {
-                return TextInputResult.AcceptedUnverified
-            }
-
-            if (attempt < MAX_ATTEMPTS - 1) {
-                return@repeat
-            }
-            return if (after == null || !after.coversEntireField) {
-                TextInputResult.AcceptedUnverified
-            } else {
-                TextInputResult.Rejected
-            }
+            return TextInputResult.AcceptedUnverified
         }
 
-        return if (clearAcceptedWithoutVerification) {
-            TextInputResult.AcceptedUnverified
-        } else {
-            TextInputResult.Rejected
-        }
+        return TextInputResult.Rejected
     }
 
     private fun isSameInputSession(generation: Long): Boolean {
         return generationProvider() == generation
     }
 
-    private fun resultAfterRejectedOperation(clearAccepted: Boolean): TextInputResult {
-        return if (clearAccepted) {
-            TextInputResult.AcceptedUnverified
-        } else {
-            TextInputResult.Rejected
+    private fun commitWithoutVerification(
+        connection: InputConnection,
+        text: String,
+        inputSessionGeneration: Long,
+    ): TextInputResult {
+        if (!isSameInputSession(inputSessionGeneration)) {
+            return TextInputResult.InputSessionChanged
+        }
+        val accepted = try {
+            connection.commitText(text, 1)
+        } catch (_: Exception) {
+            return if (isSameInputSession(inputSessionGeneration)) {
+                TextInputResult.AcceptedUnverified
+            } else {
+                TextInputResult.InputSessionChanged
+            }
+        }
+        if (!isSameInputSession(inputSessionGeneration)) {
+            return TextInputResult.InputSessionChanged
+        }
+        return if (accepted) TextInputResult.AcceptedUnverified else TextInputResult.Rejected
+    }
+
+    private fun connectionOrNull(): InputConnection? {
+        return try {
+            connectionProvider()
+        } catch (_: Exception) {
+            null
         }
     }
 
     private fun readSnapshot(connection: InputConnection): Snapshot? {
-        val extracted = connection.getExtractedText(ExtractedTextRequest(), 0) ?: return null
-        val value = extracted.text?.toString() ?: ""
-        val relativeStart = extracted.selectionStart
-        val relativeEnd = extracted.selectionEnd
-        if (relativeStart < 0 || relativeEnd < 0 || relativeStart > value.length || relativeEnd > value.length) {
+        return try {
+            val extracted = connection.getExtractedText(ExtractedTextRequest(), 0) ?: return null
+            val value = extracted.text?.toString() ?: ""
+            val relativeStart = extracted.selectionStart
+            val relativeEnd = extracted.selectionEnd
+            if (relativeStart < 0 || relativeEnd < 0 || relativeStart > value.length || relativeEnd > value.length) {
+                return null
+            }
+            Snapshot(
+                text = value,
+                startOffset = extracted.startOffset,
+                partialStartOffset = extracted.partialStartOffset,
+                selectionStart = relativeStart,
+                selectionEnd = relativeEnd,
+            )
+        } catch (_: Exception) {
             return null
         }
-        return Snapshot(
-            text = value,
-            startOffset = extracted.startOffset,
-            partialStartOffset = extracted.partialStartOffset,
-            selectionStart = relativeStart,
-            selectionEnd = relativeEnd,
-        )
     }
 
     private fun selectionFor(snapshot: Snapshot, clear: Boolean): Pair<Int, Int> {
