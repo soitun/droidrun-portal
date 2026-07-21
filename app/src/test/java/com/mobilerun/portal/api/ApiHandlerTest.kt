@@ -6,8 +6,10 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.view.KeyEvent
+import android.util.Base64
 import com.mobilerun.portal.core.StateRepository
 import com.mobilerun.portal.input.MobilerunKeyboardIME
+import com.mobilerun.portal.input.TextInputResult
 import com.mobilerun.portal.keepalive.KeepAliveController
 import com.mobilerun.portal.keepalive.KeepAliveStartupException
 import com.mobilerun.portal.model.PhoneState
@@ -178,6 +180,180 @@ class ApiHandlerTest {
         assertEquals(ApiResponse.Success("Clipboard set"), handler.setClipboard("hello"))
         verify(exactly = 1) { ime.setClipboardText("hello") }
         verify(exactly = 1) { clipboard.setPrimaryClip(clip) }
+    }
+
+    @Test
+    fun keyboardInput_returnsSuccessOnlyAfterImeVerification() {
+        val stateRepo = mockk<StateRepository>(relaxed = true)
+        val ime = mockk<MobilerunKeyboardIME>()
+        val handler = createHandler(stateRepo = stateRepo, ime = ime)
+        every { ime.inputB64TextResult("encoded", true) } returns TextInputResult.Verified
+
+        assertEquals(
+            ApiResponse.Success("input done via IME (clear=true)"),
+            handler.keyboardInput("encoded", clear = true),
+        )
+        verify(exactly = 0) { stateRepo.inputText(any(), any()) }
+    }
+
+    @Test
+    fun keyboardInput_fallsBackAfterRejectedImeReplacement() {
+        val stateRepo = mockk<StateRepository>(relaxed = true)
+        val ime = mockk<MobilerunKeyboardIME>()
+        val handler = createHandler(stateRepo = stateRepo, ime = ime)
+        every { ime.inputB64TextResult("encoded", true) } returns TextInputResult.Rejected
+        mockkStatic(Base64::class)
+        every { Base64.decode("encoded", Base64.DEFAULT) } returns "hello".toByteArray()
+        every { stateRepo.inputText("hello", true) } returns true
+
+        assertEquals(
+            ApiResponse.Success("input done via Accessibility (clear=true)"),
+            handler.keyboardInput("encoded", clear = true),
+        )
+        verify(exactly = 1) { stateRepo.inputText("hello", true) }
+    }
+
+    @Test
+    fun keyboardInput_doesNotFallbackAfterAcceptedUnverifiedImeReplacement() {
+        val stateRepo = mockk<StateRepository>(relaxed = true)
+        val ime = mockk<MobilerunKeyboardIME>()
+        val handler = createHandler(stateRepo = stateRepo, ime = ime)
+        every {
+            ime.inputB64TextResult("encoded", true)
+        } returns TextInputResult.AcceptedUnverified
+
+        assertEquals(
+            ApiResponse.Error(
+                "input accepted via IME but could not be verified; fallback skipped",
+            ),
+            handler.keyboardInput("encoded", clear = true),
+        )
+        verify(exactly = 0) { stateRepo.inputText(any(), any()) }
+    }
+
+    @Test
+    fun keyboardInput_doesNotDuplicateAcceptedUnverifiedAppend() {
+        val stateRepo = mockk<StateRepository>(relaxed = true)
+        val ime = mockk<MobilerunKeyboardIME>()
+        val handler = createHandler(stateRepo = stateRepo, ime = ime)
+        every {
+            ime.inputB64TextResult("encoded", false)
+        } returns TextInputResult.AcceptedUnverified
+
+        assertEquals(
+            ApiResponse.Error(
+                "input accepted via IME but could not be verified; fallback skipped",
+            ),
+            handler.keyboardInput("encoded", clear = false),
+        )
+        verify(exactly = 0) { stateRepo.inputText(any(), any()) }
+    }
+
+    @Test
+    fun keyboardInput_doesNotFallbackAfterInputSessionChanges() {
+        val stateRepo = mockk<StateRepository>(relaxed = true)
+        val ime = mockk<MobilerunKeyboardIME>()
+        val handler = createHandler(stateRepo = stateRepo, ime = ime)
+        every {
+            ime.inputB64TextResult("encoded", true)
+        } returns TextInputResult.InputSessionChanged
+
+        assertEquals(
+            ApiResponse.Error("input session changed during IME input; fallback skipped"),
+            handler.keyboardInput("encoded", clear = true),
+        )
+        verify(exactly = 0) { stateRepo.inputText(any(), any()) }
+    }
+
+    @Test
+    fun keyboardInput_doesNotFallbackWhenCommitOutcomeIsUnknown() {
+        val stateRepo = mockk<StateRepository>(relaxed = true)
+        val ime = mockk<MobilerunKeyboardIME>()
+        val handler = createHandler(stateRepo = stateRepo, ime = ime)
+        every {
+            ime.inputB64TextResult("encoded", false)
+        } returns TextInputResult.CommitOutcomeUnknown
+
+        assertEquals(
+            ApiResponse.Error("IME commit outcome unknown; fallback skipped"),
+            handler.keyboardInput("encoded", clear = false),
+        )
+        verify(exactly = 0) { stateRepo.inputText(any(), any()) }
+    }
+
+    @Test
+    fun keyboardClear_returnsSuccessOnlyAfterImeVerification() {
+        val stateRepo = mockk<StateRepository>(relaxed = true)
+        val ime = mockk<MobilerunKeyboardIME>()
+        val handler = createHandler(stateRepo = stateRepo, ime = ime)
+        every { ime.hasInputConnection() } returns true
+        every { ime.clearTextResult() } returns TextInputResult.Verified
+
+        assertEquals(ApiResponse.Success("Text cleared via IME"), handler.keyboardClear())
+        verify(exactly = 0) { stateRepo.inputText(any(), any()) }
+    }
+
+    @Test
+    fun keyboardClear_fallsBackAfterDefiniteImeRejection() {
+        val stateRepo = mockk<StateRepository>(relaxed = true)
+        val ime = mockk<MobilerunKeyboardIME>()
+        val handler = createHandler(stateRepo = stateRepo, ime = ime)
+        every { ime.hasInputConnection() } returns true
+        every { ime.clearTextResult() } returns TextInputResult.Rejected
+        every { stateRepo.inputText("", true) } returns true
+
+        assertEquals(
+            ApiResponse.Success("Text cleared via Accessibility"),
+            handler.keyboardClear(),
+        )
+        verify(exactly = 1) { stateRepo.inputText("", true) }
+    }
+
+    @Test
+    fun keyboardClear_doesNotFallbackAfterAcceptedUnverifiedImeClear() {
+        val stateRepo = mockk<StateRepository>(relaxed = true)
+        val ime = mockk<MobilerunKeyboardIME>()
+        val handler = createHandler(stateRepo = stateRepo, ime = ime)
+        every { ime.hasInputConnection() } returns true
+        every { ime.clearTextResult() } returns TextInputResult.AcceptedUnverified
+
+        assertEquals(
+            ApiResponse.Error(
+                "clear accepted via IME but could not be verified; fallback skipped",
+            ),
+            handler.keyboardClear(),
+        )
+        verify(exactly = 0) { stateRepo.inputText(any(), any()) }
+    }
+
+    @Test
+    fun keyboardClear_doesNotFallbackAfterInputSessionChanges() {
+        val stateRepo = mockk<StateRepository>(relaxed = true)
+        val ime = mockk<MobilerunKeyboardIME>()
+        val handler = createHandler(stateRepo = stateRepo, ime = ime)
+        every { ime.hasInputConnection() } returns true
+        every { ime.clearTextResult() } returns TextInputResult.InputSessionChanged
+
+        assertEquals(
+            ApiResponse.Error("input session changed during IME clear; fallback skipped"),
+            handler.keyboardClear(),
+        )
+        verify(exactly = 0) { stateRepo.inputText(any(), any()) }
+    }
+
+    @Test
+    fun keyboardClear_doesNotFallbackWhenCommitOutcomeIsUnknown() {
+        val stateRepo = mockk<StateRepository>(relaxed = true)
+        val ime = mockk<MobilerunKeyboardIME>()
+        val handler = createHandler(stateRepo = stateRepo, ime = ime)
+        every { ime.hasInputConnection() } returns true
+        every { ime.clearTextResult() } returns TextInputResult.CommitOutcomeUnknown
+
+        assertEquals(
+            ApiResponse.Error("IME clear commit outcome unknown; fallback skipped"),
+            handler.keyboardClear(),
+        )
+        verify(exactly = 0) { stateRepo.inputText(any(), any()) }
     }
 
     @Test

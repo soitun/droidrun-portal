@@ -17,6 +17,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.net.Uri
 import android.provider.Settings
 import com.mobilerun.portal.input.MobilerunKeyboardIME
+import com.mobilerun.portal.input.TextInputResult
 import com.mobilerun.portal.core.JsonBuilders
 import com.mobilerun.portal.core.StateRepository
 import com.mobilerun.portal.service.GestureController
@@ -314,8 +315,26 @@ class ApiHandler(
     fun keyboardInput(base64Text: String, clear: Boolean): ApiResponse {
         val ime = getKeyboardIME()
         if (ime != null) {
-            if (ime.inputB64Text(base64Text, clear)) {
-                return ApiResponse.Success("input done via IME (clear=$clear)")
+            when (ime.inputB64TextResult(base64Text, clear)) {
+                TextInputResult.Verified -> {
+                    return ApiResponse.Success("input done via IME (clear=$clear)")
+                }
+                TextInputResult.AcceptedUnverified -> {
+                    return ApiResponse.Error(
+                        "input accepted via IME but could not be verified; fallback skipped",
+                    )
+                }
+                TextInputResult.CommitOutcomeUnknown -> {
+                    return ApiResponse.Error(
+                        "IME commit outcome unknown; fallback skipped",
+                    )
+                }
+                TextInputResult.InputSessionChanged -> {
+                    return ApiResponse.Error(
+                        "input session changed during IME input; fallback skipped",
+                    )
+                }
+                TextInputResult.Rejected -> Unit
             }
         }
 
@@ -338,10 +357,27 @@ class ApiHandler(
         val ime = getKeyboardIME()
 
         if (ime != null && ime.hasInputConnection()) {
-            if (ime.clearText()) {
-                return ApiResponse.Success("Text cleared via IME")
+            when (ime.clearTextResult()) {
+                TextInputResult.Verified -> {
+                    return ApiResponse.Success("Text cleared via IME")
+                }
+                TextInputResult.AcceptedUnverified -> {
+                    return ApiResponse.Error(
+                        "clear accepted via IME but could not be verified; fallback skipped",
+                    )
+                }
+                TextInputResult.CommitOutcomeUnknown -> {
+                    return ApiResponse.Error(
+                        "IME clear commit outcome unknown; fallback skipped",
+                    )
+                }
+                TextInputResult.InputSessionChanged -> {
+                    return ApiResponse.Error(
+                        "input session changed during IME clear; fallback skipped",
+                    )
+                }
+                TextInputResult.Rejected -> Unit
             }
-            Log.w(TAG, "IME clearText() failed, falling back to Accessibility")
         }
 
         return if (stateRepo.inputText("", clear = true)) {
