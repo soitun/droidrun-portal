@@ -7,6 +7,7 @@ internal sealed class TextInputResult {
     data object Verified : TextInputResult()
     data object Rejected : TextInputResult()
     data object AcceptedUnverified : TextInputResult()
+    data object CommitOutcomeUnknown : TextInputResult()
     data object InputSessionChanged : TextInputResult()
 }
 
@@ -135,7 +136,7 @@ internal class InputConnectionTextEditor(
                 connection.commitText(text, 1)
             } catch (_: Exception) {
                 return if (isSameInputSession(inputSessionGeneration)) {
-                    TextInputResult.AcceptedUnverified
+                    TextInputResult.CommitOutcomeUnknown
                 } else {
                     TextInputResult.InputSessionChanged
                 }
@@ -189,7 +190,7 @@ internal class InputConnectionTextEditor(
             connection.commitText(text, 1)
         } catch (_: Exception) {
             return if (isSameInputSession(inputSessionGeneration)) {
-                TextInputResult.AcceptedUnverified
+                TextInputResult.CommitOutcomeUnknown
             } else {
                 TextInputResult.InputSessionChanged
             }

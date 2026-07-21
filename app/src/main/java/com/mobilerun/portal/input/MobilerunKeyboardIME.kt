@@ -95,6 +95,9 @@ class MobilerunKeyboardIME : InputMethodService() {
                 TextInputResult.AcceptedUnverified -> {
                     Log.w(TAG, "Text input accepted but could not be verified (clear=$clear)")
                 }
+                TextInputResult.CommitOutcomeUnknown -> {
+                    Log.w(TAG, "Text input commit outcome is unknown (clear=$clear)")
+                }
                 TextInputResult.InputSessionChanged -> {
                     Log.w(TAG, "Input session changed during text input (clear=$clear)")
                 }

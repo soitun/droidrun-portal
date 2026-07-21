@@ -324,6 +324,11 @@ class ApiHandler(
                         "input accepted via IME but could not be verified; fallback skipped",
                     )
                 }
+                TextInputResult.CommitOutcomeUnknown -> {
+                    return ApiResponse.Error(
+                        "IME commit outcome unknown; fallback skipped",
+                    )
+                }
                 TextInputResult.InputSessionChanged -> {
                     return ApiResponse.Error(
                         "input session changed during IME input; fallback skipped",
@@ -359,6 +364,11 @@ class ApiHandler(
                 TextInputResult.AcceptedUnverified -> {
                     return ApiResponse.Error(
                         "clear accepted via IME but could not be verified; fallback skipped",
+                    )
+                }
+                TextInputResult.CommitOutcomeUnknown -> {
+                    return ApiResponse.Error(
+                        "IME clear commit outcome unknown; fallback skipped",
                     )
                 }
                 TextInputResult.InputSessionChanged -> {

@@ -229,6 +229,21 @@ class InputConnectionTextEditorTest {
     }
 
     @Test
+    fun appendWithThrowingCommit_returnsUnknownWithoutRetry() {
+        val connection = mockk<InputConnection>(relaxed = true)
+        every { connection.finishComposingText() } returns true
+        every { connection.getExtractedText(any(), 0) } returns null
+        every { connection.commitText("hello", 1) } throws IllegalStateException("connection closed")
+        val editor = editor { connection }
+
+        assertEquals(
+            TextInputResult.CommitOutcomeUnknown,
+            editor.inputText("hello", clear = false),
+        )
+        verify(exactly = 1) { connection.commitText("hello", 1) }
+    }
+
+    @Test
     fun appendWithUnsupportedCompositionPreparation_commitsOnceAtCurrentSelection() {
         val connection = mockk<InputConnection>(relaxed = true)
         every { connection.getExtractedText(any(), 0) } returns snapshot("hello", selectionStart = 5)

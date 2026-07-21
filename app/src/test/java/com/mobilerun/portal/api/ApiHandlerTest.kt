@@ -266,6 +266,22 @@ class ApiHandlerTest {
     }
 
     @Test
+    fun keyboardInput_doesNotFallbackWhenCommitOutcomeIsUnknown() {
+        val stateRepo = mockk<StateRepository>(relaxed = true)
+        val ime = mockk<MobilerunKeyboardIME>()
+        val handler = createHandler(stateRepo = stateRepo, ime = ime)
+        every {
+            ime.inputB64TextResult("encoded", false)
+        } returns TextInputResult.CommitOutcomeUnknown
+
+        assertEquals(
+            ApiResponse.Error("IME commit outcome unknown; fallback skipped"),
+            handler.keyboardInput("encoded", clear = false),
+        )
+        verify(exactly = 0) { stateRepo.inputText(any(), any()) }
+    }
+
+    @Test
     fun keyboardClear_returnsSuccessOnlyAfterImeVerification() {
         val stateRepo = mockk<StateRepository>(relaxed = true)
         val ime = mockk<MobilerunKeyboardIME>()
@@ -320,6 +336,21 @@ class ApiHandlerTest {
 
         assertEquals(
             ApiResponse.Error("input session changed during IME clear; fallback skipped"),
+            handler.keyboardClear(),
+        )
+        verify(exactly = 0) { stateRepo.inputText(any(), any()) }
+    }
+
+    @Test
+    fun keyboardClear_doesNotFallbackWhenCommitOutcomeIsUnknown() {
+        val stateRepo = mockk<StateRepository>(relaxed = true)
+        val ime = mockk<MobilerunKeyboardIME>()
+        val handler = createHandler(stateRepo = stateRepo, ime = ime)
+        every { ime.hasInputConnection() } returns true
+        every { ime.clearTextResult() } returns TextInputResult.CommitOutcomeUnknown
+
+        assertEquals(
+            ApiResponse.Error("IME clear commit outcome unknown; fallback skipped"),
             handler.keyboardClear(),
         )
         verify(exactly = 0) { stateRepo.inputText(any(), any()) }
